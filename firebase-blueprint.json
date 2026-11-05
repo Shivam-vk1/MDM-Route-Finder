@@ -1,0 +1,110 @@
+{
+  "entities": {
+    "School": {
+      "title": "School",
+      "description": "A school delivery location for Kanpur Kitchen (TAPF) MDM operations.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number", "description": "Numeric identifier for the school" },
+        "schoolName": { "type": "string", "maxLength": 200, "description": "Official school name" },
+        "nodeGroup": { "type": "string", "maxLength": 150, "description": "Node group identifier" },
+        "nodeGroupName": { "type": "string", "maxLength": 200, "description": "Node group cluster name" },
+        "udise": { "type": "string", "maxLength": 50, "description": "UDISE school code" },
+        "routeCode": { "type": "string", "maxLength": 50, "description": "Delivery route code" },
+        "nodeCode": { "type": "string", "maxLength": 50, "description": "Delivery stop node code" },
+        "routeName": { "type": "string", "maxLength": 100, "description": "Delivery route name" },
+        "lat": { "type": "number", "description": "Latitude coordinate" },
+        "lon": { "type": "number", "description": "Longitude coordinate" },
+        "driverName": { "type": "string", "maxLength": 150, "description": "Assigned vehicle driver name" },
+        "driverContact": { "type": "string", "maxLength": 40, "description": "Driver phone number" },
+        "routeExecutive": { "type": "string", "maxLength": 150, "description": "Route executive name" },
+        "routeExecutiveContact": { "type": "string", "maxLength": 40, "description": "Route executive phone number" },
+        "address": { "type": "string", "maxLength": 350, "description": "Physical school address" },
+        "pincode": { "type": "string", "maxLength": 20, "description": "Postal pincode" },
+        "spocName": { "type": "string", "maxLength": 150, "description": "School SPOC / Headmaster name" },
+        "spocContact": { "type": "string", "maxLength": 40, "description": "School SPOC contact number" },
+        "category": { "type": "string", "maxLength": 100, "description": "School category" },
+        "updatedBy": { "type": "string", "maxLength": 150, "description": "Email or login ID who last modified the record" },
+        "updatedByStaffId": { "type": "string", "maxLength": 100, "description": "Staff member document ID if modified by office staff" },
+        "updatedAt": { "type": "string", "maxLength": 100, "description": "ISO timestamp of last update" }
+      },
+      "required": [
+        "id",
+        "schoolName",
+        "routeName",
+        "lat",
+        "lon"
+      ]
+    },
+    "RouteConfig": {
+      "title": "RouteConfig",
+      "description": "A delivery route configuration for Kanpur Kitchen MDM operations.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 100, "description": "Unique route document ID" },
+        "routeName": { "type": "string", "maxLength": 100, "description": "Display name of the route" },
+        "routeCode": { "type": "string", "maxLength": 50, "description": "Route code e.g. RC00007" },
+        "color": { "type": "string", "maxLength": 30, "description": "Hex color code for map markers and badges" },
+        "routeExecutive": { "type": "string", "maxLength": 150, "description": "Default route executive name" },
+        "routeExecutiveContact": { "type": "string", "maxLength": 40, "description": "Default route executive contact" },
+        "createdAt": { "type": "string", "maxLength": 100, "description": "ISO timestamp" }
+      },
+      "required": ["id", "routeName", "color"]
+    },
+    "StaffMember": {
+      "title": "StaffMember",
+      "description": "An office staff / TAPF sub-admin account managed by Super Admin.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 100, "description": "Unique staff member ID" },
+        "name": { "type": "string", "maxLength": 150, "description": "Full name of TAPF member" },
+        "loginId": { "type": "string", "maxLength": 150, "description": "Staff login email or ID" },
+        "passwordHash": { "type": "string", "maxLength": 128, "description": "SHA-256 hash of the staff password" },
+        "passwordHint": { "type": "string", "maxLength": 150, "description": "Admin-visible credential reference for management" },
+        "role": { "type": "string", "maxLength": 100, "description": "Designation e.g. Route Executive, Office Staff" },
+        "canEdit": { "type": "boolean", "description": "Whether staff member can edit existing schools in addition to adding schools" },
+        "active": { "type": "boolean", "description": "Whether this staff account is active" },
+        "createdAt": { "type": "string", "maxLength": 100, "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "maxLength": 100, "description": "Last update timestamp" }
+      },
+      "required": ["id", "name", "loginId", "passwordHash", "role", "canEdit", "active"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Security audit trail of admin and staff actions.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 100, "description": "Unique log identifier" },
+        "timestamp": { "type": "string", "maxLength": 100, "description": "Formatted timestamp" },
+        "action": {
+          "type": "string",
+          "enum": ["ADD_SCHOOL", "EDIT_SCHOOL", "DELETE_SCHOOL", "RESET_DATA", "IMPORT_DATA", "MANAGE_ROUTE", "MANAGE_STAFF"],
+          "maxLength": 50,
+          "description": "Type of administrative action"
+        },
+        "summary": { "type": "string", "maxLength": 400, "description": "Human-readable summary of the change" },
+        "adminEmail": { "type": "string", "maxLength": 150, "description": "Actor email or staff login ID" },
+        "updatedByStaffId": { "type": "string", "maxLength": 100, "description": "Optional staff member ID" }
+      },
+      "required": ["id", "timestamp", "action", "summary", "adminEmail"]
+    }
+  },
+  "firestore": {
+    "/schools/{schoolId}": {
+      "schema": { "$ref": "#/entities/School" },
+      "description": "Publicly readable directory of Kanpur MDM schools; writable by Super Admin or active TAPF Staff Members."
+    },
+    "/routes/{routeId}": {
+      "schema": { "$ref": "#/entities/RouteConfig" },
+      "description": "Publicly readable delivery route definitions; writable by Super Admin or active TAPF Staff Members."
+    },
+    "/staff_members/{memberId}": {
+      "schema": { "$ref": "#/entities/StaffMember" },
+      "description": "TAPF office staff accounts; writable exclusively by Super Admin shivamvk1090@gmail.com."
+    },
+    "/audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Audit log recording school, route, and staff modifications."
+    }
+  }
+}

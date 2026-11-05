@@ -1,0 +1,8 @@
+{
+  "name": "MDM Route Finder - Kanpur Kitchen",
+  "description": "School location tracker, delivery route navigator, driver and SPOC contact directory for Kanpur Kitchen (TAPF) MDM operations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

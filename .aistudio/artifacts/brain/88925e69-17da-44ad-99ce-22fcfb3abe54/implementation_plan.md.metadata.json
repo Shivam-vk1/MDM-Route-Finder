@@ -1,0 +1,6 @@
+{
+  "summary":  "Implementation plan to replace the insecure PIN/passcode login with real Google Authentication (via Firebase Auth & Firestore) restricted strictly to shivamvk1090@gmail.com, while keeping the map and school directory publicly viewable without login.",
+  "updatedAt":  "2026-11-02T03:30:10.724616221Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}
