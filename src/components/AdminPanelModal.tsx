@@ -30,7 +30,9 @@ import {
   Eye,
   EyeOff,
   Sun,
-  Moon
+  Moon,
+  Truck,
+  Phone
 } from 'lucide-react';
 import { 
   logoutAdmin, 
@@ -52,7 +54,7 @@ interface AdminPanelModalProps {
   onEditSchoolClick: (school: School) => void;
   onDeleteSchool: (schoolId: number) => void;
   onResetToDefault: () => void;
-  onSaveRoute: (route: RouteConfig) => void;
+  onSaveRoute: (route: RouteConfig, syncSchools?: boolean) => void;
   onDeleteRoute: (routeId: string) => void;
   onSaveStaffMember: (member: StaffMember) => void;
   onDeleteStaffMember: (memberId: string) => void;
@@ -100,8 +102,18 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   const [routeColorInput, setRouteColorInput] = useState(ROUTE_COLOR_PALETTE[0]);
   const [routeExecInput, setRouteExecInput] = useState('Ayush Gupta');
   const [routeExecPhoneInput, setRouteExecPhoneInput] = useState('8299485052');
+  const [routeDriverInput, setRouteDriverInput] = useState('');
+  const [routeDriverPhoneInput, setRouteDriverPhoneInput] = useState('');
+  const [routeSyncSchoolsWithDriver, setRouteSyncSchoolsWithDriver] = useState(true);
   const [routeFormError, setRouteFormError] = useState<string | null>(null);
   const [confirmDeleteRouteId, setConfirmDeleteRouteId] = useState<string | null>(null);
+
+  // Quick Driver Change Modal State
+  const [quickDriverRoute, setQuickDriverRoute] = useState<RouteConfig | null>(null);
+  const [quickDriverName, setQuickDriverName] = useState('');
+  const [quickDriverPhone, setQuickDriverPhone] = useState('');
+  const [quickDriverSync, setQuickDriverSync] = useState(true);
+  const [quickDriverFeedback, setQuickDriverFeedback] = useState<string | null>(null);
 
   // TAPF Staff Management Form State (Super Admin Only)
   const [editingStaff, setEditingStaff] = useState<StaffMember | null>(null);
@@ -132,6 +144,20 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         .catch((err) => console.warn('Audit log load error:', err));
     }
   }, [isOpen, activeTab]);
+
+  // Helper to resolve route driver info from route config or matching schools
+  const getRouteDriverInfo = (routeName: string, explicitDriver?: string, explicitContact?: string) => {
+    if (explicitDriver && explicitDriver.trim()) {
+      return { driverName: explicitDriver.trim(), driverContact: (explicitContact || '').trim() };
+    }
+    const school = schools.find(
+      (s) => s.routeName?.toLowerCase() === routeName.toLowerCase() && s.driverName?.trim()
+    );
+    return {
+      driverName: school?.driverName?.trim() || '',
+      driverContact: (explicitContact || school?.driverContact || '').trim()
+    };
+  };
 
   // Filter schools for admin list (MUST be called before early return to obey React Rules of Hooks)
   const filteredSchools = useMemo(() => {
@@ -166,6 +192,9 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     setRouteColorInput(ROUTE_COLOR_PALETTE[routes.length % ROUTE_COLOR_PALETTE.length]);
     setRouteExecInput('Ayush Gupta');
     setRouteExecPhoneInput('8299485052');
+    setRouteDriverInput('');
+    setRouteDriverPhoneInput('');
+    setRouteSyncSchoolsWithDriver(true);
     setRouteFormError(null);
   };
 
@@ -176,6 +205,10 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     setRouteColorInput(r.color || ROUTE_COLOR_PALETTE[0]);
     setRouteExecInput(r.routeExecutive || 'Ayush Gupta');
     setRouteExecPhoneInput(r.routeExecutiveContact || '8299485052');
+    const driverInfo = getRouteDriverInfo(r.routeName, r.driverName, r.driverContact);
+    setRouteDriverInput(driverInfo.driverName);
+    setRouteDriverPhoneInput(driverInfo.driverContact);
+    setRouteSyncSchoolsWithDriver(true);
     setRouteFormError(null);
   };
 
@@ -206,11 +239,43 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       color: routeColorInput || '#e8a33d',
       routeExecutive: sanitizeInput(routeExecInput, 140) || 'Ayush Gupta',
       routeExecutiveContact: sanitizeInput(routeExecPhoneInput, 35) || '8299485052',
+      driverName: sanitizeInput(routeDriverInput, 140) || undefined,
+      driverContact: sanitizeInput(routeDriverPhoneInput, 35) || undefined,
       createdAt: editingRoute?.createdAt || new Date().toISOString()
     };
 
-    onSaveRoute(savedRoute);
+    onSaveRoute(savedRoute, routeSyncSchoolsWithDriver);
     resetRouteForm();
+  };
+
+  // Quick Driver Change handlers
+  const handleOpenQuickDriver = (r: RouteConfig) => {
+    const info = getRouteDriverInfo(r.routeName, r.driverName, r.driverContact);
+    setQuickDriverRoute(r);
+    setQuickDriverName(info.driverName);
+    setQuickDriverPhone(info.driverContact);
+    setQuickDriverSync(true);
+    setQuickDriverFeedback(null);
+  };
+
+  const handleQuickDriverSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickDriverRoute) return;
+    const cleanDriverName = sanitizeInput(quickDriverName, 140);
+    const cleanDriverPhone = sanitizeInput(quickDriverPhone, 35);
+
+    const updatedRoute: RouteConfig = {
+      ...quickDriverRoute,
+      driverName: cleanDriverName,
+      driverContact: cleanDriverPhone,
+    };
+
+    onSaveRoute(updatedRoute, quickDriverSync);
+    setQuickDriverFeedback(`Driver for "${quickDriverRoute.routeName}" updated to ${cleanDriverName || 'None'}!`);
+    setTimeout(() => {
+      setQuickDriverRoute(null);
+      setQuickDriverFeedback(null);
+    }, 1100);
   };
 
   // Reset Staff Form
@@ -977,6 +1042,49 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   </div>
                 </div>
 
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div>
+                    <label className={`block mb-1 font-semibold flex items-center gap-1 ${isLight ? 'text-slate-700' : 'text-[#a4b3ab]'}`}>
+                      <Truck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                      Assigned Driver Name
+                    </label>
+                    <input
+                      type="text"
+                      value={routeDriverInput}
+                      onChange={(e) => setRouteDriverInput(e.target.value)}
+                      placeholder="e.g. Rajesh, Ankush, Vimlesh"
+                      className={`w-full px-3 py-2 border rounded-xl outline-hidden ${inputBaseClass}`}
+                    />
+                  </div>
+                  <div>
+                    <label className={`block mb-1 font-semibold flex items-center gap-1 ${isLight ? 'text-slate-700' : 'text-[#a4b3ab]'}`}>
+                      <Phone className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                      Driver Phone
+                    </label>
+                    <input
+                      type="tel"
+                      value={routeDriverPhoneInput}
+                      onChange={(e) => setRouteDriverPhoneInput(e.target.value)}
+                      placeholder="e.g. 9559796624"
+                      className={`w-full px-3 py-2 border rounded-xl font-mono outline-hidden ${inputBaseClass}`}
+                    />
+                  </div>
+                </div>
+
+                <label className={`flex items-start gap-2 p-2.5 rounded-xl border text-[11px] cursor-pointer transition-colors ${
+                  isLight ? 'bg-emerald-50/70 border-emerald-200 text-emerald-950' : 'bg-emerald-950/40 border-emerald-800/60 text-emerald-200'
+                }`}>
+                  <input
+                    type="checkbox"
+                    checked={routeSyncSchoolsWithDriver}
+                    onChange={(e) => setRouteSyncSchoolsWithDriver(e.target.checked)}
+                    className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4 shrink-0"
+                  />
+                  <span>
+                    <strong>Auto-update schools:</strong> Also update driver name & phone across all schools in {routeNameInput ? `"${routeNameInput}"` : 'this route'}.
+                  </span>
+                </label>
+
                 <button
                   type="submit"
                   className={`w-full py-2.5 px-4 rounded-xl font-bold text-xs shadow-md flex items-center justify-center gap-1.5 transition-all ${
@@ -993,13 +1101,18 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
             {/* Right Column: Existing Routes List */}
             <div className="lg:col-span-7 space-y-2.5">
-              <h3
-                className={`text-sm font-heading font-bold ${
-                  isLight ? 'text-slate-900' : 'text-[#f2ede0]'
-                }`}
-              >
-                Active Delivery Routes ({routes.length})
-              </h3>
+              <div className="flex items-center justify-between gap-2">
+                <h3
+                  className={`text-sm font-heading font-bold ${
+                    isLight ? 'text-slate-900' : 'text-[#f2ede0]'
+                  }`}
+                >
+                  Active Delivery Routes ({routes.length})
+                </h3>
+                <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                  Tap "Change Driver" to switch driver anytime
+                </span>
+              </div>
               <div
                 className={`border rounded-2xl divide-y ${
                   isLight
@@ -1011,20 +1124,21 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   const count = schools.filter(
                     (s) => s.routeName?.toLowerCase() === r.routeName.toLowerCase()
                   ).length;
+                  const driverInfo = getRouteDriverInfo(r.routeName, r.driverName, r.driverContact);
 
                   return (
                     <div
                       key={r.id || r.routeName}
-                      className={`p-3.5 flex items-center justify-between gap-3 transition-colors ${
+                      className={`p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors ${
                         isLight ? 'hover:bg-slate-50' : 'hover:bg-[#16271e]'
                       }`}
                     >
-                      <div className="flex items-center gap-3 min-w-0">
+                      <div className="flex items-start sm:items-center gap-3 min-w-0">
                         <div
-                          className="w-4 h-10 rounded-full shrink-0"
+                          className="w-4 h-12 rounded-full shrink-0 mt-0.5 sm:mt-0"
                           style={{ backgroundColor: r.color || '#7fb298' }}
                         />
-                        <div className="min-w-0">
+                        <div className="min-w-0 space-y-1">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span
                               className={`font-bold text-sm ${
@@ -1048,17 +1162,55 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                               · {count} Schools
                             </span>
                           </div>
-                          <p
-                            className={`text-[11px] mt-0.5 ${
-                              isLight ? 'text-slate-500' : 'text-[#a4b3ab]'
-                            }`}
-                          >
-                            Executive: {r.routeExecutive || 'Ayush Gupta'} ({r.routeExecutiveContact || '8299485052'})
-                          </p>
+
+                          {/* Driver & Executive Details */}
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div
+                              className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-xs font-semibold border ${
+                                driverInfo.driverName
+                                  ? isLight
+                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                    : 'bg-emerald-950/70 text-emerald-300 border-emerald-800/70'
+                                  : isLight
+                                    ? 'bg-slate-100 text-slate-500 border-slate-200'
+                                    : 'bg-slate-800/60 text-slate-400 border-slate-700'
+                              }`}
+                            >
+                              <Truck className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                              <span>Driver: <strong>{driverInfo.driverName || 'Not Assigned'}</strong></span>
+                              {driverInfo.driverContact && (
+                                <span className="font-mono text-[10px] opacity-85">
+                                  ({driverInfo.driverContact})
+                                </span>
+                              )}
+                            </div>
+
+                            <span
+                              className={`text-[11px] ${
+                                isLight ? 'text-slate-500' : 'text-[#a4b3ab]'
+                              }`}
+                            >
+                              Exec: {r.routeExecutive || 'Ayush Gupta'} {r.routeExecutiveContact ? `(${r.routeExecutiveContact})` : ''}
+                            </span>
+                          </div>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-1.5 shrink-0">
+                      <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenQuickDriver(r)}
+                          className={`px-2.5 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1 transition-all shadow-xs ${
+                            isLight
+                              ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700'
+                              : 'bg-emerald-700 hover:bg-emerald-600 text-white border-emerald-600'
+                          }`}
+                          title={`Change driver for ${r.routeName}`}
+                        >
+                          <Truck className="w-3.5 h-3.5" />
+                          <span>Change Driver</span>
+                        </button>
+
                         <button
                           type="button"
                           onClick={() => handleStartEditRoute(r)}
@@ -1552,6 +1704,127 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
           </button>
         </div>
       </div>
+
+      {/* QUICK DRIVER CHANGE MODAL OVERLAY */}
+      {quickDriverRoute && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-in fade-in duration-150">
+          <div
+            className={`w-full max-w-md rounded-2xl border shadow-2xl p-5 space-y-4 ${
+              isLight ? 'bg-white border-slate-200 text-slate-900' : 'bg-[#15231c] border-[#2c4436] text-[#f2ede0]'
+            }`}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div
+                  className="w-3.5 h-7 rounded-full shrink-0"
+                  style={{ backgroundColor: quickDriverRoute.color || '#10b981' }}
+                />
+                <div>
+                  <h4 className="font-heading font-bold text-base flex items-center gap-1.5">
+                    <Truck className="w-4 h-4 text-emerald-500" />
+                    <span>Change Route Driver</span>
+                  </h4>
+                  <p className={`text-xs ${isLight ? 'text-slate-500' : 'text-[#a4b3ab]'}`}>
+                    Route: <strong className={isLight ? 'text-blue-600' : 'text-amber-400'}>{quickDriverRoute.routeName}</strong> (
+                    {schools.filter(s => s.routeName?.toLowerCase() === quickDriverRoute.routeName.toLowerCase()).length} schools
+                    )
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setQuickDriverRoute(null);
+                  setQuickDriverFeedback(null);
+                }}
+                className={`p-1.5 rounded-xl border ${
+                  isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200' : 'bg-[#21382b] hover:bg-[#2c4436] text-slate-300 border-[#2c4436]'
+                }`}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {quickDriverFeedback && (
+              <div className="p-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-xs font-semibold flex items-center gap-2">
+                <Check className="w-4 h-4 shrink-0" />
+                <span>{quickDriverFeedback}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleQuickDriverSubmit} className="space-y-3.5">
+              <div>
+                <label className={`block mb-1 text-xs font-semibold ${isLight ? 'text-slate-700' : 'text-[#a4b3ab]'}`}>
+                  Driver Full Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={quickDriverName}
+                  onChange={(e) => setQuickDriverName(e.target.value)}
+                  placeholder="e.g. Rajesh, Ankush, Vimlesh, Servesh"
+                  className={`w-full px-3 py-2 text-sm border rounded-xl outline-hidden ${inputBaseClass}`}
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className={`block mb-1 text-xs font-semibold ${isLight ? 'text-slate-700' : 'text-[#a4b3ab]'}`}>
+                  Driver Contact / Phone Number
+                </label>
+                <input
+                  type="tel"
+                  value={quickDriverPhone}
+                  onChange={(e) => setQuickDriverPhone(e.target.value)}
+                  placeholder="e.g. 9559796624"
+                  className={`w-full px-3 py-2 text-sm border rounded-xl font-mono outline-hidden ${inputBaseClass}`}
+                />
+              </div>
+
+              <label className={`flex items-start gap-2.5 p-3 rounded-xl border text-xs cursor-pointer ${
+                isLight ? 'bg-emerald-50/70 border-emerald-200 text-emerald-950' : 'bg-emerald-950/40 border-emerald-800/60 text-emerald-200'
+              }`}>
+                <input
+                  type="checkbox"
+                  checked={quickDriverSync}
+                  onChange={(e) => setQuickDriverSync(e.target.checked)}
+                  className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4 shrink-0"
+                />
+                <span className="leading-relaxed">
+                  <strong>Sync to all schools:</strong> Update this driver name and phone across all{' '}
+                  {schools.filter(s => s.routeName?.toLowerCase() === quickDriverRoute.routeName.toLowerCase()).length}{' '}
+                  schools assigned to "{quickDriverRoute.routeName}".
+                </span>
+              </label>
+
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuickDriverRoute(null);
+                    setQuickDriverFeedback(null);
+                  }}
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-semibold border ${
+                    isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200' : 'bg-[#1a2d24] hover:bg-[#21382b] text-slate-300 border-[#2c4436]'
+                  }`}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold text-white shadow-md flex items-center justify-center gap-1.5 transition-all ${
+                    isLight ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-emerald-700 hover:bg-emerald-600'
+                  }`}
+                >
+                  <Truck className="w-3.5 h-3.5" />
+                  <span>Save & Sync Driver</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

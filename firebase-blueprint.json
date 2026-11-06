@@ -45,6 +45,8 @@
         "routeName": { "type": "string", "maxLength": 100, "description": "Display name of the route" },
         "routeCode": { "type": "string", "maxLength": 50, "description": "Route code e.g. RC00007" },
         "color": { "type": "string", "maxLength": 30, "description": "Hex color code for map markers and badges" },
+        "driverName": { "type": "string", "maxLength": 150, "description": "Default vehicle driver name for this route" },
+        "driverContact": { "type": "string", "maxLength": 40, "description": "Default vehicle driver phone number for this route" },
         "routeExecutive": { "type": "string", "maxLength": 150, "description": "Default route executive name" },
         "routeExecutiveContact": { "type": "string", "maxLength": 40, "description": "Default route executive contact" },
         "createdAt": { "type": "string", "maxLength": 100, "description": "ISO timestamp" }

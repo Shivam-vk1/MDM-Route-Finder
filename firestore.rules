@@ -75,7 +75,9 @@ service cloud.firestore {
       return data.keys().hasAll(['id', 'routeName', 'color']) &&
         data.keys().hasOnly([
           'id', 'routeName', 'routeCode', 'color',
-          'routeExecutive', 'routeExecutiveContact', 'createdAt', 'updatedByStaffId'
+          'routeExecutive', 'routeExecutiveContact',
+          'driverName', 'driverContact',
+          'createdAt', 'updatedByStaffId'
         ]) &&
         data.id is string && data.id.size() >= 1 && data.id.size() <= 100 &&
         data.routeName is string && data.routeName.size() >= 1 && data.routeName.size() <= 100 &&
@@ -83,6 +85,8 @@ service cloud.firestore {
         (!('routeCode' in data) || (data.routeCode is string && data.routeCode.size() <= 50)) &&
         (!('routeExecutive' in data) || (data.routeExecutive is string && data.routeExecutive.size() <= 150)) &&
         (!('routeExecutiveContact' in data) || (data.routeExecutiveContact is string && data.routeExecutiveContact.size() <= 40)) &&
+        (!('driverName' in data) || (data.driverName is string && data.driverName.size() <= 150)) &&
+        (!('driverContact' in data) || (data.driverContact is string && data.driverContact.size() <= 40)) &&
         (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 100)) &&
         (!('updatedByStaffId' in data) || (data.updatedByStaffId is string && data.updatedByStaffId.size() <= 100));
     }

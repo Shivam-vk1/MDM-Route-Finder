@@ -537,7 +537,7 @@ function MainApp() {
   };
 
   // Save or Update a Route in Cloud Firestore + Local State
-  const handleSaveRoute = async (routeObj: RouteConfig) => {
+  const handleSaveRoute = async (routeObj: RouteConfig, syncSchools = true) => {
     const staff = getLoggedInStaff();
     const superAuth = isAuthorizedAdminUser(auth.currentUser);
     if (!superAuth && !staff) {
@@ -559,13 +559,64 @@ function MainApp() {
       ...(staff && !superAuth ? { updatedByStaffId: staff.id } : {}),
     };
 
+    // If driverName is updated and syncSchools is enabled, update all schools under this route
+    let affectedSchoolCount = 0;
+    if (syncSchools && routeObj.driverName) {
+      const updatedSchools = schools.map((s) => {
+        if (s.routeName?.trim().toLowerCase() === routeObj.routeName.trim().toLowerCase()) {
+          affectedSchoolCount++;
+          return {
+            ...s,
+            driverName: routeObj.driverName || s.driverName,
+            driverContact: routeObj.driverContact !== undefined ? routeObj.driverContact : s.driverContact,
+            routeExecutive: routeObj.routeExecutive || s.routeExecutive,
+            routeExecutiveContact: routeObj.routeExecutiveContact !== undefined ? routeObj.routeExecutiveContact : s.routeExecutiveContact,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        return s;
+      });
+
+      if (affectedSchoolCount > 0) {
+        setSchools(updatedSchools);
+        saveSchoolsToStorage(updatedSchools);
+
+        try {
+          const batch = writeBatch(db);
+          updatedSchools
+            .filter((s) => s.routeName?.trim().toLowerCase() === routeObj.routeName.trim().toLowerCase())
+            .forEach((s) => {
+              batch.set(
+                doc(db, 'schools', `school_${s.id}`),
+                {
+                  ...s,
+                  ...(staff && !superAuth ? { updatedByStaffId: staff.id } : {}),
+                },
+                { merge: true }
+              );
+            });
+          await batch.commit();
+        } catch (err) {
+          console.warn('Batch school driver sync error:', err);
+        }
+      }
+    }
+
     try {
       await setDoc(doc(db, 'routes', routeObj.id), payload);
       await logSecurityAudit(
         'MANAGE_ROUTE',
-        exists ? `Updated route "${routeObj.routeName}"` : `Created new route "${routeObj.routeName}" (${routeObj.routeCode})`
+        exists
+          ? `Updated route "${routeObj.routeName}" (Driver: ${routeObj.driverName || 'N/A'}, ${affectedSchoolCount} schools synced)`
+          : `Created new route "${routeObj.routeName}" (Driver: ${routeObj.driverName || 'N/A'})`
       );
-      showToast(exists ? `Updated route "${routeObj.routeName}"` : `Added new route "${routeObj.routeName}"!`);
+      showToast(
+        affectedSchoolCount > 0
+          ? `Updated "${routeObj.routeName}" driver & ${affectedSchoolCount} schools!`
+          : exists
+          ? `Updated route "${routeObj.routeName}"`
+          : `Added new route "${routeObj.routeName}"!`
+      );
     } catch (error) {
       try {
         handleFirestoreError(error, exists ? OperationType.UPDATE : OperationType.CREATE, `routes/${routeObj.id}`);

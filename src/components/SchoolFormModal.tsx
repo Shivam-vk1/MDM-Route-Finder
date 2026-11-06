@@ -124,6 +124,8 @@ export const SchoolFormModal: React.FC<SchoolFormModalProps> = ({
       routeCode: matchedRoute?.routeCode || prev.routeCode || 'RC00001',
       routeExecutive: matchedRoute?.routeExecutive || prev.routeExecutive || 'Ayush Gupta',
       routeExecutiveContact: matchedRoute?.routeExecutiveContact || prev.routeExecutiveContact || '8299485052',
+      driverName: matchedRoute?.driverName || prev.driverName,
+      driverContact: matchedRoute?.driverContact || prev.driverContact,
     }));
   };
 
@@ -136,6 +138,8 @@ export const SchoolFormModal: React.FC<SchoolFormModalProps> = ({
       routeName: cleanName,
       routeCode: sanitizeInput(newRouteCode, 40) || `RC0000${routes.length + 1}`,
       color: newRouteColor,
+      driverName: formData.driverName || '',
+      driverContact: formData.driverContact || '',
       routeExecutive: formData.routeExecutive || 'Ayush Gupta',
       routeExecutiveContact: formData.routeExecutiveContact || '8299485052',
       createdAt: new Date().toISOString()

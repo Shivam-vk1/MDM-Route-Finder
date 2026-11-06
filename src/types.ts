@@ -30,6 +30,8 @@ export interface RouteConfig {
   routeName: string;
   routeCode: string;
   color: string;
+  driverName?: string;
+  driverContact?: string;
   routeExecutive?: string;
   routeExecutiveContact?: string;
   createdAt?: string;
@@ -83,12 +85,12 @@ export const KNOWN_ROUTES = [
 ] as const;
 
 export const DEFAULT_ROUTES: RouteConfig[] = [
-  { id: 'route_vijay_nagar', routeName: 'VIJAY NAGAR', routeCode: 'RC00002', color: '#e0c25c', routeExecutive: 'Ayush Gupta', routeExecutiveContact: '9559796624' },
-  { id: 'route_govind_nagar', routeName: 'GOVIND NAGAR', routeCode: 'RC00004', color: '#7c9ee0', routeExecutive: 'Ayush Gupta', routeExecutiveContact: '8299485052' },
-  { id: 'route_kidwai_nagar', routeName: 'KIDWAI NAGAR', routeCode: 'RC00005', color: '#d16257', routeExecutive: 'Ayush Gupta', routeExecutiveContact: '8299485052' },
-  { id: 'route_barra', routeName: 'Barra', routeCode: 'RC00006', color: '#7fb298', routeExecutive: 'Ayush Gupta', routeExecutiveContact: '8299485052' },
-  { id: 'route_bairi', routeName: 'BAIRI', routeCode: 'RC00001', color: '#e8a33d', routeExecutive: 'Ayush Gupta', routeExecutiveContact: '8299485052' },
-  { id: 'route_shastri_nagar', routeName: 'Shastri Nagar', routeCode: 'RC00003', color: '#c99be0', routeExecutive: 'Ayush Gupta', routeExecutiveContact: '7052120237' },
+  { id: 'route_vijay_nagar', routeName: 'VIJAY NAGAR', routeCode: 'RC00002', color: '#e0c25c', driverName: 'Rajesh', driverContact: '9559796624', routeExecutive: 'Ayush Gupta', routeExecutiveContact: '9559796624' },
+  { id: 'route_govind_nagar', routeName: 'GOVIND NAGAR', routeCode: 'RC00004', color: '#7c9ee0', driverName: 'Vimlesh', driverContact: '8382811077', routeExecutive: 'Ayush Gupta', routeExecutiveContact: '8299485052' },
+  { id: 'route_kidwai_nagar', routeName: 'KIDWAI NAGAR', routeCode: 'RC00005', color: '#d16257', driverName: 'Abhishek', driverContact: '9264919746', routeExecutive: 'Ayush Gupta', routeExecutiveContact: '8299485052' },
+  { id: 'route_barra', routeName: 'Barra', routeCode: 'RC00006', color: '#7fb298', driverName: 'Servesh', driverContact: '9616647881', routeExecutive: 'Ayush Gupta', routeExecutiveContact: '8299485052' },
+  { id: 'route_bairi', routeName: 'BAIRI', routeCode: 'RC00001', color: '#e8a33d', driverName: 'Ankush', driverContact: '6387689751', routeExecutive: 'Ayush Gupta', routeExecutiveContact: '8299485052' },
+  { id: 'route_shastri_nagar', routeName: 'Shastri Nagar', routeCode: 'RC00003', color: '#c99be0', driverName: 'Sanu', driverContact: '7052120237', routeExecutive: 'Ayush Gupta', routeExecutiveContact: '7052120237' },
 ];
 
 // Runtime registry of custom route colors so all components resolve route colors synchronously
