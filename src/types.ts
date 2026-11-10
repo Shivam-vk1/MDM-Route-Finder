@@ -42,8 +42,7 @@ export interface StaffMember {
   id: string;
   name: string;
   loginId: string;
-  passwordHash: string;
-  passwordHint?: string;
+  passwordHash?: string;
   role: string;
   canEdit: boolean;
   active: boolean;

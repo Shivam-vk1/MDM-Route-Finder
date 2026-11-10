@@ -218,9 +218,17 @@ export function isSessionActive(): boolean {
   return isAuthorizedAdminUser(auth.currentUser) || Boolean(getLoggedInStaff());
 }
 
-// Sign out current Google session AND any TAPF Staff session
+// Sign out current Google session AND any TAPF Staff session with thorough browser cache purge
 export async function logoutAdmin(): Promise<void> {
   setLoggedInStaff(null);
+  try {
+    sessionStorage.clear();
+    localStorage.removeItem(STAFF_SESSION_KEY);
+    localStorage.removeItem(STAFF_STORAGE_KEY);
+    localStorage.removeItem(ADMIN_AUDIT_KEY);
+  } catch (e) {
+    console.warn('Storage cleanup error on logout:', e);
+  }
   try {
     await signOutAdmin();
   } catch (e) {

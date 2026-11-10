@@ -61,15 +61,14 @@
         "id": { "type": "string", "maxLength": 100, "description": "Unique staff member ID" },
         "name": { "type": "string", "maxLength": 150, "description": "Full name of TAPF member" },
         "loginId": { "type": "string", "maxLength": 150, "description": "Staff login email or ID" },
-        "passwordHash": { "type": "string", "maxLength": 128, "description": "SHA-256 hash of the staff password" },
-        "passwordHint": { "type": "string", "maxLength": 150, "description": "Admin-visible credential reference for management" },
+        "passwordHash": { "type": "string", "maxLength": 128, "description": "Optional SHA-256 hash or auth UID mapping" },
         "role": { "type": "string", "maxLength": 100, "description": "Designation e.g. Route Executive, Office Staff" },
         "canEdit": { "type": "boolean", "description": "Whether staff member can edit existing schools in addition to adding schools" },
         "active": { "type": "boolean", "description": "Whether this staff account is active" },
         "createdAt": { "type": "string", "maxLength": 100, "description": "Creation timestamp" },
         "updatedAt": { "type": "string", "maxLength": 100, "description": "Last update timestamp" }
       },
-      "required": ["id", "name", "loginId", "passwordHash", "role", "canEdit", "active"]
+      "required": ["id", "name", "loginId", "role", "canEdit", "active"]
     },
     "AuditLog": {
       "title": "AuditLog",

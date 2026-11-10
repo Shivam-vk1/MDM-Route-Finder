@@ -27,13 +27,22 @@ service cloud.firestore {
         request.auth.token.email_verified == true;
     }
 
-    // Active TAPF Staff Member Relational Gate
-    function isActiveStaffWrite(data) {
-      return ('updatedByStaffId' in data) &&
-        data.updatedByStaffId is string &&
-        isValidId(data.updatedByStaffId) &&
-        exists(/databases/$(database)/documents/staff_members/$(data.updatedByStaffId)) &&
-        get(/databases/$(database)/documents/staff_members/$(data.updatedByStaffId)).data.active == true;
+    // Verified Staff Member Gate: Must be authenticated via Firebase Auth, verified email, and registered in staff_members
+    function isAuthorizedStaff() {
+      return isSignedIn() &&
+        request.auth.token.email_verified == true && (
+          (request.auth.token.email != null &&
+           exists(/databases/$(database)/documents/staff_members/$(request.auth.token.email)) &&
+           get(/databases/$(database)/documents/staff_members/$(request.auth.token.email)).data.active == true &&
+           get(/databases/$(database)/documents/staff_members/$(request.auth.token.email)).data.canEdit == true) ||
+          (exists(/databases/$(database)/documents/staff_members/$(request.auth.uid)) &&
+           get(/databases/$(database)/documents/staff_members/$(request.auth.uid)).data.active == true &&
+           get(/databases/$(database)/documents/staff_members/$(request.auth.uid)).data.canEdit == true)
+        );
+    }
+
+    function isAuthorizedWriter() {
+      return isAuthorizedAdmin() || isAuthorizedStaff();
     }
 
     // Validation Blueprint for School entity
@@ -91,21 +100,20 @@ service cloud.firestore {
         (!('updatedByStaffId' in data) || (data.updatedByStaffId is string && data.updatedByStaffId.size() <= 100));
     }
 
-    // Validation Blueprint for StaffMember entity
+    // Validation Blueprint for StaffMember entity (strictly Super Admin managed, no plaintext passwordHint)
     function isValidStaffMember(data) {
-      return data.keys().hasAll(['id', 'name', 'loginId', 'passwordHash', 'role', 'canEdit', 'active']) &&
+      return data.keys().hasAll(['id', 'name', 'loginId', 'role', 'canEdit', 'active']) &&
         data.keys().hasOnly([
-          'id', 'name', 'loginId', 'passwordHash', 'passwordHint',
+          'id', 'name', 'loginId', 'passwordHash',
           'role', 'canEdit', 'active', 'createdAt', 'updatedAt'
         ]) &&
         data.id is string && data.id.size() >= 1 && data.id.size() <= 100 &&
         data.name is string && data.name.size() >= 1 && data.name.size() <= 150 &&
         data.loginId is string && data.loginId.size() >= 1 && data.loginId.size() <= 150 &&
-        data.passwordHash is string && data.passwordHash.size() >= 32 && data.passwordHash.size() <= 128 &&
+        (!('passwordHash' in data) || (data.passwordHash is string && data.passwordHash.size() <= 128)) &&
         data.role is string && data.role.size() >= 1 && data.role.size() <= 100 &&
         data.canEdit is bool &&
         data.active is bool &&
-        (!('passwordHint' in data) || (data.passwordHint is string && data.passwordHint.size() <= 150)) &&
         (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 100)) &&
         (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 100));
     }
@@ -130,38 +138,38 @@ service cloud.firestore {
       allow get: if true;
     }
 
-    // Schools Collection: Publicly readable, writable by Super Admin or active TAPF Staff Member
+    // Schools Collection: Publicly readable directory, write operations strictly require verified Firebase Auth
     match /schools/{schoolId} {
       allow get: if isValidId(schoolId);
       allow list: if resource.data.lat >= -90;
-      allow create: if isValidId(schoolId) && isValidSchool(incoming()) && (isAuthorizedAdmin() || isActiveStaffWrite(incoming()));
-      allow update: if isValidId(schoolId) && isValidSchool(incoming()) && (isAuthorizedAdmin() || isActiveStaffWrite(incoming()));
+      allow create: if isSignedIn() && request.auth.token.email_verified == true && isValidId(schoolId) && isValidSchool(incoming()) && isAuthorizedWriter();
+      allow update: if isSignedIn() && request.auth.token.email_verified == true && isValidId(schoolId) && isValidSchool(incoming()) && isAuthorizedWriter();
       allow delete: if isAuthorizedAdmin() && isValidId(schoolId);
     }
 
-    // Routes Collection: Publicly readable, writable by Super Admin or active TAPF Staff Member
+    // Routes Collection: Publicly readable route configs, write operations strictly require verified Firebase Auth
     match /routes/{routeId} {
       allow get: if isValidId(routeId);
       allow list: if resource.data.routeName is string;
-      allow create: if isValidId(routeId) && isValidRouteConfig(incoming()) && (isAuthorizedAdmin() || isActiveStaffWrite(incoming()));
-      allow update: if isValidId(routeId) && isValidRouteConfig(incoming()) && (isAuthorizedAdmin() || isActiveStaffWrite(incoming()));
+      allow create: if isSignedIn() && request.auth.token.email_verified == true && isValidId(routeId) && isValidRouteConfig(incoming()) && isAuthorizedWriter();
+      allow update: if isSignedIn() && request.auth.token.email_verified == true && isValidId(routeId) && isValidRouteConfig(incoming()) && isAuthorizedWriter();
       allow delete: if isAuthorizedAdmin() && isValidId(routeId);
     }
 
-    // Staff Members Collection: Strictly managed by Super Admin; readable for active staff login check
+    // Staff Members Collection: Zero public exposure. Strictly accessible ONLY by Super Admin.
     match /staff_members/{memberId} {
-      allow get: if isValidId(memberId) && (isAuthorizedAdmin() || resource.data.active == true);
-      allow list: if isAuthorizedAdmin() || resource.data.active == true;
+      allow get: if isAuthorizedAdmin() && isValidId(memberId);
+      allow list: if isAuthorizedAdmin();
       allow create: if isAuthorizedAdmin() && isValidId(memberId) && isValidStaffMember(incoming());
       allow update: if isAuthorizedAdmin() && isValidId(memberId) && isValidStaffMember(incoming());
       allow delete: if isAuthorizedAdmin() && isValidId(memberId);
     }
 
-    // Audit Logs Collection: Readable by Super Admin, creatable by Super Admin or active Staff Member
+    // Audit Logs Collection: Strictly viewable by Super Admin; append-only for verified admin/staff
     match /audit_logs/{logId} {
       allow get: if isAuthorizedAdmin() && isValidId(logId);
       allow list: if isAuthorizedAdmin() && resource.data.id is string;
-      allow create: if isValidId(logId) && isValidAuditLog(incoming()) && (isAuthorizedAdmin() || isActiveStaffWrite(incoming()));
+      allow create: if isSignedIn() && request.auth.token.email_verified == true && isValidId(logId) && isValidAuditLog(incoming()) && isAuthorizedWriter();
       allow update, delete: if false;
     }
   }

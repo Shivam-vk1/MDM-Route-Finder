@@ -27,20 +27,36 @@ export const ExcelUploadModal: React.FC<ExcelUploadModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Helper to safely extract cell as trimmed string
-  const cleanStr = (val: any): string => {
+  // Helper to safely extract cell as trimmed, sanitized string (strips formula injection & tags)
+  const cleanStr = (val: any, maxLen = 350): string => {
     if (val === null || val === undefined) return '';
-    return String(val).trim();
+    let str = String(val).trim();
+    // Formula Injection Guard: strip leading =, +, -, @, tab or return chars that Excel/calc could execute
+    if (/^[=+\-@\t\r]/.test(str)) {
+      str = str.replace(/^[=+\-@\t\r]+/, '');
+    }
+    return str
+      .replace(/<[^>]*>?/gm, '') // Strip HTML tags
+      .replace(/[<>]/g, '')
+      .trim()
+      .slice(0, maxLen);
   };
 
-  // Helper to extract numeric lat/lon
-  const parseNum = (val: any): number => {
-    if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  // Helper to extract numeric lat/lon with strict geographic boundaries
+  const parseNum = (val: any, minVal = -180, maxVal = 180): number => {
+    if (typeof val === 'number') {
+      if (isNaN(val)) return 0;
+      return Math.min(Math.max(val, minVal), maxVal);
+    }
     if (!val) return 0;
     const clean = String(val).replace(/[^0-9.-]/g, '');
     const num = parseFloat(clean);
-    return isNaN(num) ? 0 : num;
+    if (isNaN(num)) return 0;
+    return Math.min(Math.max(num, minVal), maxVal);
   };
+
+  const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB maximum file size
+  const MAX_ROWS = 1000; // Maximum 1000 rows to prevent browser memory exhaustion
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -51,52 +67,92 @@ export const ExcelUploadModal: React.FC<ExcelUploadModalProps> = ({
     setIsProcessing(true);
 
     try {
+      // 1. Strict File Size Validation (Pre-read guard)
+      if (file.size > MAX_FILE_SIZE) {
+        throw new Error(
+          `File size (${(file.size / (1024 * 1024)).toFixed(1)} MB) exceeds the maximum allowed limit of 5 MB.`
+        );
+      }
+
       const fileName = file.name.toLowerCase();
 
+      // JSON parsing flow
       if (fileName.endsWith('.json')) {
         const text = await file.text();
-        const json = JSON.parse(text);
-        if (!Array.isArray(json)) {
-          throw new Error('JSON file must contain an array of schools.');
+        let json: any;
+        try {
+          json = JSON.parse(text);
+        } catch {
+          throw new Error('Invalid JSON format. Please upload a valid JSON array of school objects.');
         }
+
+        if (!Array.isArray(json)) {
+          throw new Error('JSON file must contain an array of school objects.');
+        }
+
+        if (json.length > MAX_ROWS) {
+          throw new Error(`The file contains ${json.length} records. Maximum allowed per upload is ${MAX_ROWS} schools.`);
+        }
+
         const parsedSchools: School[] = json.map((item, idx) => ({
-          id: item.id || idx + 1,
-          nodeGroup: cleanStr(item.nodeGroup || item.NODE_GROUP),
-          nodeGroupName: cleanStr(item.nodeGroupName || item['NODE GROUP NAME']),
-          schoolName: cleanStr(item.schoolName || item.SCHOOL_NAME || `School #${idx + 1}`),
-          udise: cleanStr(item.udise || item['UDISE-CODE'] || item.UDISE),
-          routeCode: cleanStr(item.routeCode || item['ROUTE CODE']),
-          nodeCode: cleanStr(item.nodeCode || item['NODE CODE']),
-          routeName: cleanStr(item.routeName || item['ROUTE NAME']),
-          lat: parseNum(item.lat || item.latitude),
-          lon: parseNum(item.lon || item.longitude),
-          driverName: cleanStr(item.driverName || item['Driver Name'] || item['DRIVER_NAME']),
-          driverContact: cleanStr(item.driverContact || item['Driver Contact'] || item['DRIVER_CONTACT']),
-          routeExecutive: cleanStr(item.routeExecutive || item['Route Executive Name'] || item['ROUTE_EXECUTIVE']),
-          routeExecutiveContact: cleanStr(item.routeExecutiveContact || item['Route Executive Contact']),
-          address: cleanStr(item.address || item.Address || item.ADDRESS),
-          pincode: cleanStr(item.pincode || item.Pincode || item.PINCODE),
-          spocName: cleanStr(item.spocName || item['School SPOC name'] || item['SPOC_NAME']),
-          spocContact: cleanStr(item.spocContact || item['School SPOC number'] || item['spocContact']),
-          category: cleanStr(item.category || item['School Category'] || item.CATEGORY)
+          id: typeof item.id === 'number' ? item.id : idx + 1,
+          nodeGroup: cleanStr(item.nodeGroup || item.NODE_GROUP, 150),
+          nodeGroupName: cleanStr(item.nodeGroupName || item['NODE GROUP NAME'], 200),
+          schoolName: cleanStr(item.schoolName || item.SCHOOL_NAME || `School #${idx + 1}`, 200),
+          udise: cleanStr(item.udise || item['UDISE-CODE'] || item.UDISE, 50),
+          routeCode: cleanStr(item.routeCode || item['ROUTE CODE'], 50),
+          nodeCode: cleanStr(item.nodeCode || item['NODE CODE'], 50),
+          routeName: cleanStr(item.routeName || item['ROUTE NAME'] || 'General', 100),
+          lat: parseNum(item.lat || item.latitude, -90, 90),
+          lon: parseNum(item.lon || item.longitude, -180, 180),
+          driverName: cleanStr(item.driverName || item['Driver Name'] || item['DRIVER_NAME'], 150),
+          driverContact: cleanStr(item.driverContact || item['Driver Contact'] || item['DRIVER_CONTACT'], 40),
+          routeExecutive: cleanStr(item.routeExecutive || item['Route Executive Name'] || item['ROUTE_EXECUTIVE'], 150),
+          routeExecutiveContact: cleanStr(item.routeExecutiveContact || item['Route Executive Contact'], 40),
+          address: cleanStr(item.address || item.Address || item.ADDRESS, 350),
+          pincode: cleanStr(item.pincode || item.Pincode || item.PINCODE, 20),
+          spocName: cleanStr(item.spocName || item['School SPOC name'] || item['SPOC_NAME'], 150),
+          spocContact: cleanStr(item.spocContact || item['School SPOC number'] || item['spocContact'], 40),
+          category: cleanStr(item.category || item['School Category'] || item.CATEGORY, 100)
         }));
 
         setPreviewSchools(parsedSchools);
-        setSuccessMsg(`Successfully parsed ${parsedSchools.length} schools from JSON!`);
+        setSuccessMsg(`Successfully validated ${parsedSchools.length} schools from JSON!`);
         setIsProcessing(false);
         return;
       }
 
-      // Excel parsing via xlsx
+      // Excel parsing flow via xlsx
       const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: 'array' });
+      const workbook = XLSX.read(buffer, { 
+        type: 'array',
+        cellDates: false,
+        raw: false
+      });
+
+      if (!workbook || !workbook.SheetNames || workbook.SheetNames.length === 0) {
+        throw new Error('Workbook contains no readable sheets.');
+      }
+
+      if (workbook.SheetNames.length > 10) {
+        throw new Error('Workbook contains more than 10 sheets. Please upload a standard workbook.');
+      }
+
       const firstSheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[firstSheetName];
-      // Raw string format to preserve leading zeroes in phone numbers & codes
-      const rawRows: any[] = XLSX.utils.sheet_to_json(worksheet, { raw: false });
+      if (!worksheet) {
+        throw new Error('Could not access the first worksheet in this Excel workbook.');
+      }
+
+      // Convert to JSON with raw string format to preserve leading zeroes in phone numbers & codes
+      const rawRows: any[] = XLSX.utils.sheet_to_json(worksheet, { raw: false, defval: '' });
 
       if (!rawRows || rawRows.length === 0) {
-        throw new Error('The selected Excel sheet contains no rows.');
+        throw new Error('The selected Excel sheet contains no data rows.');
+      }
+
+      if (rawRows.length > MAX_ROWS) {
+        throw new Error(`The sheet contains ${rawRows.length} rows. Maximum allowed per upload is ${MAX_ROWS} schools.`);
       }
 
       const parsed: School[] = rawRows.map((row, index) => {
@@ -114,8 +170,8 @@ export const ExcelUploadModal: React.FC<ExcelUploadModalProps> = ({
           return '';
         };
 
-        const latVal = parseNum(getCol('latitude', 'lat'));
-        const lonVal = parseNum(getCol('longitude', 'lon', 'long'));
+        const latVal = parseNum(getCol('latitude', 'lat'), -90, 90);
+        const lonVal = parseNum(getCol('longitude', 'lon', 'long'), -180, 180);
 
         return {
           id: index + 1,
@@ -140,18 +196,18 @@ export const ExcelUploadModal: React.FC<ExcelUploadModalProps> = ({
         };
       });
 
-      // Filter out empty rows if any
-      const validSchools = parsed.filter(s => s.schoolName && s.schoolName.length > 1);
+      // Filter out empty rows
+      const validSchools = parsed.filter(s => s.schoolName && s.schoolName.trim().length > 1);
 
       if (validSchools.length === 0) {
-        throw new Error('Could not identify valid school records. Please check the Excel column headers.');
+        throw new Error('Could not identify valid school records. Please ensure column headers match expected format (e.g. SCHOOL_NAME, ROUTE NAME, latitude, longitude).');
       }
 
       setPreviewSchools(validSchools);
-      setSuccessMsg(`Extracted ${validSchools.length} schools from "${file.name}"! Ready to apply.`);
+      setSuccessMsg(`Extracted and validated ${validSchools.length} schools from "${file.name}"!`);
     } catch (err: any) {
-      console.error('File parsing error:', err);
-      setErrorMsg(err.message || 'Failed to read the file. Please ensure it is a valid Excel or JSON file.');
+      console.warn('File upload parsing issue handled safely:', err);
+      setErrorMsg(err?.message || 'Failed to process file. Please ensure it is a valid, uncorrupted Excel or JSON file under 5 MB.');
     } finally {
       setIsProcessing(false);
     }

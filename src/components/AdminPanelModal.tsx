@@ -294,7 +294,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     setEditingStaff(member);
     setStaffNameInput(member.name);
     setStaffLoginIdInput(member.loginId);
-    setStaffPasswordInput(member.passwordHint || '');
+    setStaffPasswordInput(''); // Never populate plaintext password
     setStaffRoleInput(member.role || 'TAPF Route Coordinator');
     setStaffCanEdit(member.canEdit);
     setStaffActive(member.active);
@@ -331,11 +331,9 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     }
 
     let finalHash = editingStaff?.passwordHash || '';
-    let finalHint = editingStaff?.passwordHint || '';
 
     if (rawPass.length > 0) {
       finalHash = await hashStaffPassword(rawPass);
-      finalHint = sanitizeInput(rawPass, 140);
     }
 
     const savedMember: StaffMember = {
@@ -343,7 +341,6 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       name: cleanName,
       loginId: cleanLogin,
       passwordHash: finalHash,
-      passwordHint: finalHint,
       role: cleanRole,
       canEdit: staffCanEdit,
       active: staffActive,
@@ -356,7 +353,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   };
 
   const handleCopyStaffCredentials = (member: StaffMember) => {
-    const text = `TAPF Kanpur Route Portal Login:\nLogin ID: ${member.loginId}\nPassword: ${member.passwordHint || '(Contact Admin)'}`;
+    const text = `TAPF Kanpur Route Portal:\nLogin Email: ${member.loginId}\nRole: ${member.role}`;
     navigator.clipboard?.writeText(text);
     setCopiedStaffId(member.id);
     setTimeout(() => {
@@ -1513,19 +1510,18 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                           }`}
                         >
                           <span>
-                            ID:{' '}
+                            Email / ID:{' '}
                             <strong className={isLight ? 'text-blue-600' : 'text-amber-300'}>
                               {member.loginId}
                             </strong>
                           </span>
-                          {member.passwordHint && (
-                            <span>
-                              Password:{' '}
-                              <strong className={isLight ? 'text-slate-900' : 'text-[#f2ede0]'}>
-                                {member.passwordHint}
-                              </strong>
-                            </span>
-                          )}
+                          <span className={`px-2 py-0.5 rounded-md text-[10px] font-semibold border ${
+                            member.active
+                              ? isLight ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-emerald-950/70 text-emerald-300 border-emerald-800'
+                              : isLight ? 'bg-red-50 text-red-700 border-red-200' : 'bg-red-950/70 text-red-300 border-red-800'
+                          }`}>
+                            {member.active ? 'Active' : 'Suspended'}
+                          </span>
                         </div>
 
                         <p className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-[#6d8076]'}`}>
