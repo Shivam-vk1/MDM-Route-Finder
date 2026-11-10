@@ -67,7 +67,8 @@ import {
 } from 'lucide-react';
 
 const GOOGLE_MAPS_API_KEY =
-  (import.meta as any).env.VITE_GOOGLE_MAPS_API_KEY || '';
+  (import.meta as any).env.VITE_GOOGLE_MAPS_API_KEY ||
+  'AIzaSyAImDr1Fve9924izpfZA5JkPd_9PIaJkis';
 
 const THEME_STORAGE_KEY = 'mdm_theme_mode_v1';
 
