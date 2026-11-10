@@ -11,6 +11,7 @@ import {
   getFirestore, 
   collection, 
   doc, 
+  getDoc, 
   getDocFromServer, 
   getDocs, 
   setDoc, 
@@ -133,6 +134,24 @@ export async function signInWithGoogleAdmin(): Promise<{
     if (err?.code === 'auth/popup-closed-by-user') {
       return { success: false, error: 'Google Sign-In popup was closed before completing login.' };
     }
+    if (err?.code === 'auth/unauthorized-domain') {
+      return {
+        success: false,
+        error: `Domain "${typeof window !== 'undefined' ? window.location.hostname : 'current domain'}" is not authorized in Firebase Console. Please add it to Firebase Console > Authentication > Settings > Authorized domains.`,
+      };
+    }
+    if (err?.code === 'auth/internal-error') {
+      return {
+        success: false,
+        error: `Firebase Auth internal error on ${typeof window !== 'undefined' ? window.location.hostname : 'this domain'}. Please ensure this domain is added to Firebase Authorized Domains and browser popups/third-party cookies are allowed.`,
+      };
+    }
+    if (err?.code === 'auth/popup-blocked') {
+      return {
+        success: false,
+        error: 'Sign-in popup was blocked by your browser. Please allow popups for this site.',
+      };
+    }
     return {
       success: false,
       error: err?.message || 'Google authentication failed. Please try again.',
@@ -147,6 +166,7 @@ export async function signOutAdmin(): Promise<void> {
 export {
   collection,
   doc,
+  getDoc,
   getDocs,
   setDoc,
   deleteDoc,

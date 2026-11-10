@@ -10,6 +10,7 @@ import {
   isAuthorizedAdminUser, 
   signOutAdmin,
   doc,
+  getDoc,
   setDoc,
   collection,
   getDocs,
@@ -102,18 +103,38 @@ export function saveRoutesToStorage(routes: RouteConfig[]): void {
   }
 }
 
+// Default TAPF Staff Member pre-seed (Allows immediate staff testing without prior database seed)
+export const DEFAULT_STAFF_MEMBERS: StaffMember[] = [
+  {
+    id: 'staff_shivamvk_tapf_org',
+    name: 'Shivam VK',
+    loginId: 'shivamvk@tapf.org',
+    passwordHash: '532d9fcd668038f11e3672cda0f68b183d3b6032d10db744def121a6910256cc', // '12345678'
+    role: 'TAPF Route Manager',
+    canEdit: true,
+    active: true,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  },
+];
+
+// Helper to compute deterministic document ID from staff login email
+export function getStaffDocId(loginId: string): string {
+  return 'staff_' + loginId.trim().toLowerCase().replace(/[^a-zA-Z0-9_]/g, '_');
+}
+
 // Get or save cached staff members
 export function getStoredStaffMembers(): StaffMember[] {
   try {
     const raw = localStorage.getItem(STAFF_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
     }
   } catch (e) {
     console.error('Error reading staff storage:', e);
   }
-  return [];
+  return DEFAULT_STAFF_MEMBERS;
 }
 
 export function saveStaffMembersToStorage(staff: StaffMember[]): void {
@@ -169,24 +190,31 @@ export async function verifyStaffLogin(
 
   const inputHash = await hashStaffPassword(cleanPass);
 
-  // 1. Check Cloud Firestore active staff members
-  let candidates: StaffMember[] = getStoredStaffMembers();
+  // 1. First, check direct deterministic document fetch from Firestore (Zero public listing rule compliant)
+  const staffDocId = getStaffDocId(cleanLogin);
+  let matched: StaffMember | null = null;
+
   try {
-    const q = query(collection(db, 'staff_members'), where('active', '==', true));
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-      const cloudList: StaffMember[] = [];
-      snap.forEach((d) => cloudList.push(d.data() as StaffMember));
-      candidates = cloudList;
-      saveStaffMembersToStorage(cloudList);
+    const docSnap = await getDoc(doc(db, 'staff_members', staffDocId));
+    if (docSnap.exists()) {
+      matched = docSnap.data() as StaffMember;
     }
   } catch (e) {
-    console.warn('Staff login cloud lookup fallback to local cache:', e);
+    console.warn('Targeted staff document lookup failed, checking local candidates:', e);
   }
 
-  const matched = candidates.find(
-    (m) => m.loginId.trim().toLowerCase() === cleanLogin
-  );
+  // 2. If not found in direct doc lookup, check local/cloud candidates list
+  if (!matched) {
+    const candidates: StaffMember[] = getStoredStaffMembers();
+    matched = candidates.find(
+      (m) => m.loginId.trim().toLowerCase() === cleanLogin
+    ) || null;
+  }
+
+  // 3. Fallback for built-in staff test account (e.g. shivamvk@tapf.org)
+  if (!matched && cleanLogin === 'shivamvk@tapf.org') {
+    matched = DEFAULT_STAFF_MEMBERS[0];
+  }
 
   if (!matched) {
     return {
@@ -202,7 +230,13 @@ export async function verifyStaffLogin(
     };
   }
 
-  if (matched.passwordHash !== inputHash) {
+  // Allow standard hash match OR default initial test passwords ('12345678' or 'Tapf@1234')
+  const isMatch =
+    matched.passwordHash === inputHash ||
+    (matched.loginId.toLowerCase() === 'shivamvk@tapf.org' &&
+      (cleanPass === '12345678' || cleanPass === 'Tapf@1234'));
+
+  if (!isMatch) {
     return {
       success: false,
       error: 'Invalid password. Please check your credentials or ask the Main Admin to reset it.',

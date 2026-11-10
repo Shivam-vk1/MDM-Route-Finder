@@ -300,8 +300,11 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                 required
                 autoComplete="username"
                 value={staffLoginId}
-                onChange={(e) => setStaffLoginId(e.target.value)}
-                placeholder="staff@kanpur-schools.org"
+                onChange={(e) => {
+                  setStaffLoginId(e.target.value);
+                  if (errorMsg) setErrorMsg(null);
+                }}
+                placeholder="shivamvk@tapf.org"
                 className={`w-full pl-10 pr-4 py-3 border rounded-2xl text-sm outline-hidden transition-colors ${
                   isLight
                     ? 'bg-slate-50 border-slate-200 focus:border-blue-600 focus:bg-white text-slate-900 placeholder-slate-400'
@@ -309,6 +312,9 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                 }`}
               />
             </div>
+            <p className={`text-[11px] mt-1 ${isLight ? 'text-slate-500' : 'text-[#6ca388]'}`}>
+              Demo / Pre-seeded Staff: <code className="font-mono text-amber-500">shivamvk@tapf.org</code> (Pass: <code className="font-mono">12345678</code>)
+            </p>
           </div>
 
           <div>

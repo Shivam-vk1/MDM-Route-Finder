@@ -337,7 +337,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     }
 
     const savedMember: StaffMember = {
-      id: editingStaff?.id || `staff_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: editingStaff?.id || `staff_${cleanLogin.replace(/[^a-zA-Z0-9_]/g, '_')}`,
       name: cleanName,
       loginId: cleanLogin,
       passwordHash: finalHash,

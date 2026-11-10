@@ -156,9 +156,9 @@ service cloud.firestore {
       allow delete: if isAuthorizedAdmin() && isValidId(routeId);
     }
 
-    // Staff Members Collection: Zero public exposure. Strictly accessible ONLY by Super Admin.
+    // Staff Members Collection: Zero public listing. Targeted get permitted by valid ID for staff credential verification.
     match /staff_members/{memberId} {
-      allow get: if isAuthorizedAdmin() && isValidId(memberId);
+      allow get: if isValidId(memberId);
       allow list: if isAuthorizedAdmin();
       allow create: if isAuthorizedAdmin() && isValidId(memberId) && isValidStaffMember(incoming());
       allow update: if isAuthorizedAdmin() && isValidId(memberId) && isValidStaffMember(incoming());
