@@ -791,20 +791,14 @@ function MainApp() {
     setActiveRoute('ALL');
   };
 
-  return (
-    <APIProvider 
-      apiKey={GOOGLE_MAPS_API_KEY} 
-      libraries={['marker', 'maps']}
-      language="en"
-      region="IN"
+  const mainContent = (
+    <div
+      className={`flex flex-col h-[100dvh] w-full overflow-hidden font-sans select-none transition-colors duration-200 ${
+        isLight
+          ? 'bg-[#f8fafc] text-slate-900'
+          : 'bg-[#111e17] text-[#f2ede0]'
+      }`}
     >
-      <div
-        className={`flex flex-col h-[100dvh] w-full overflow-hidden font-sans select-none transition-colors duration-200 ${
-          isLight
-            ? 'bg-[#f8fafc] text-slate-900'
-            : 'bg-[#111e17] text-[#f2ede0]'
-        }`}
-      >
         {/* Google Maps Quota Defense Banner */}
         {quotaExceeded && (
           <div className="bg-amber-50 border-b border-amber-200 text-amber-900 px-4 py-2 text-xs md:text-sm text-center sticky top-0 z-50 shadow-sm shrink-0">
@@ -1334,6 +1328,7 @@ function MainApp() {
               }}
               activeRoute={activeRoute}
               theme={theme}
+              googleMapsApiKey={GOOGLE_MAPS_API_KEY}
             />
           </div>
         </div>
@@ -1470,8 +1465,22 @@ function MainApp() {
           theme={theme}
         />
       </div>
-    </APIProvider>
   );
+
+  if (GOOGLE_MAPS_API_KEY && GOOGLE_MAPS_API_KEY.trim()) {
+    return (
+      <APIProvider 
+        apiKey={GOOGLE_MAPS_API_KEY} 
+        libraries={['marker', 'maps']}
+        language="en"
+        region="IN"
+      >
+        {mainContent}
+      </APIProvider>
+    );
+  }
+
+  return mainContent;
 }
 
 export default function App() {

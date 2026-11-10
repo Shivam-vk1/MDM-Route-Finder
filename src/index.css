@@ -15,7 +15,7 @@
 }
 
 /* Leaflet Dark mode filter on map tiles only - not on markers or popups */
-.leaflet-tile-pane {
+.leaflet-dark-mode .leaflet-tile-pane {
   filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.9) saturate(0.7);
 }
 

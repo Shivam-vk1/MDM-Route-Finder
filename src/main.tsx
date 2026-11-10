@@ -1,5 +1,6 @@
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
+import 'leaflet/dist/leaflet.css';
 import './index.css';
 
 // Tier 1 Google Maps Platform Quota Handling
