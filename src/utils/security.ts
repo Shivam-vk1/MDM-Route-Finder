@@ -103,43 +103,33 @@ export function saveRoutesToStorage(routes: RouteConfig[]): void {
   }
 }
 
-// Default TAPF Staff Member pre-seed (Allows immediate staff testing without prior database seed)
-export const DEFAULT_STAFF_MEMBERS: StaffMember[] = [
-  {
-    id: 'staff_shivamvk_tapf_org',
-    name: 'Shivam VK',
-    loginId: 'shivamvk@tapf.org',
-    passwordHash: '532d9fcd668038f11e3672cda0f68b183d3b6032d10db744def121a6910256cc', // '12345678'
-    role: 'TAPF Route Manager',
-    canEdit: true,
-    active: true,
-    createdAt: '2026-01-01T00:00:00.000Z',
-    updatedAt: '2026-01-01T00:00:00.000Z',
-  },
-];
-
 // Helper to compute deterministic document ID from staff login email
 export function getStaffDocId(loginId: string): string {
   return 'staff_' + loginId.trim().toLowerCase().replace(/[^a-zA-Z0-9_]/g, '_');
 }
 
-// Get or save cached staff members
+// Get or save cached staff members (Zero hardcoded credentials in codebase)
 export function getStoredStaffMembers(): StaffMember[] {
   try {
     const raw = localStorage.getItem(STAFF_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (Array.isArray(parsed)) {
+        // Purge any legacy demo accounts from local storage
+        return parsed.filter((m) => m && m.id && m.id !== 'staff_shivamvk_tapf_org');
+      }
     }
   } catch (e) {
     console.error('Error reading staff storage:', e);
   }
-  return DEFAULT_STAFF_MEMBERS;
+  return [];
 }
 
 export function saveStaffMembersToStorage(staff: StaffMember[]): void {
   try {
-    localStorage.setItem(STAFF_STORAGE_KEY, JSON.stringify(staff));
+    // Filter legacy demo seeds before storing
+    const cleaned = staff.filter((m) => m && m.id && m.id !== 'staff_shivamvk_tapf_org');
+    localStorage.setItem(STAFF_STORAGE_KEY, JSON.stringify(cleaned));
   } catch (e) {
     console.error('Error saving staff storage:', e);
   }
@@ -176,7 +166,8 @@ export function setLoggedInStaff(staff: StaffMember | null): void {
   }
 }
 
-// Verify TAPF Staff Member Login ID / Email & Password against Cloud Firestore + local cache
+// Verify TAPF Staff Member Login ID / Email & Password against Cloud Firestore
+// Only accounts created and authorized by Main Admin in Firebase can authenticate. Zero credentials in GitHub repo.
 export async function verifyStaffLogin(
   loginIdInput: string,
   passwordInput: string
@@ -200,10 +191,10 @@ export async function verifyStaffLogin(
       matched = docSnap.data() as StaffMember;
     }
   } catch (e) {
-    console.warn('Targeted staff document lookup failed, checking local candidates:', e);
+    console.warn('Targeted staff document lookup failed, checking local cache:', e);
   }
 
-  // 2. If not found in direct doc lookup, check local/cloud candidates list
+  // 2. If not found in direct doc lookup, check local cache (saved when Main Admin manages accounts)
   if (!matched) {
     const candidates: StaffMember[] = getStoredStaffMembers();
     matched = candidates.find(
@@ -211,32 +202,23 @@ export async function verifyStaffLogin(
     ) || null;
   }
 
-  // 3. Fallback for built-in staff test account (e.g. shivamvk@tapf.org)
-  if (!matched && cleanLogin === 'shivamvk@tapf.org') {
-    matched = DEFAULT_STAFF_MEMBERS[0];
-  }
-
+  // Strictly enforce that account must be authorized by Super Admin in Firebase
   if (!matched) {
     return {
       success: false,
-      error: 'No TAPF Staff account found with this Login ID / Email. Contact Super Admin.',
+      error: 'No authorized TAPF Staff account found. Please ask the Main Admin to add your account in the Admin Console.',
     };
   }
 
   if (!matched.active) {
     return {
       success: false,
-      error: 'This TAPF Staff account has been suspended by the Main Admin.',
+      error: 'This TAPF Staff account has been deactivated or suspended by the Main Admin.',
     };
   }
 
-  // Allow standard hash match OR default initial test passwords ('12345678' or 'Tapf@1234')
-  const isMatch =
-    matched.passwordHash === inputHash ||
-    (matched.loginId.toLowerCase() === 'shivamvk@tapf.org' &&
-      (cleanPass === '12345678' || cleanPass === 'Tapf@1234'));
-
-  if (!isMatch) {
+  // Strictly verify against salted SHA-256 hash in Firebase - zero hardcoded bypasses
+  if (matched.passwordHash !== inputHash) {
     return {
       success: false,
       error: 'Invalid password. Please check your credentials or ask the Main Admin to reset it.',
