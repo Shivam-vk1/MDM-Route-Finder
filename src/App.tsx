@@ -210,6 +210,76 @@ function MainApp() {
     return () => unsub();
   }, []);
 
+  // Strict Copy & Text Selection Protection: Unlocked ONLY for verified Super Admin
+  useEffect(() => {
+    const body = document.body;
+
+    if (isSuperAdmin) {
+      body.classList.remove('select-none', 'copy-protected');
+      body.classList.add('select-text', 'copy-unlocked');
+      return;
+    }
+
+    body.classList.remove('select-text', 'copy-unlocked');
+    body.classList.add('select-none', 'copy-protected');
+
+    // Clear any lingering browser selection immediately on lock / logout
+    try {
+      window.getSelection()?.removeAllRanges();
+    } catch {
+      // Ignore selection clear errors
+    }
+
+    const isEditableTarget = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable;
+    };
+
+    const handleBlockClipboard = (e: ClipboardEvent) => {
+      e.preventDefault();
+    };
+
+    const handleBlockNonEditable = (e: Event) => {
+      if (!isEditableTarget(e.target)) {
+        e.preventDefault();
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const hasModifier = e.ctrlKey || e.metaKey;
+      if (!hasModifier) return;
+      const key = e.key.toLowerCase();
+
+      // Always block clipboard copy/cut shortcuts for non-Super-Admin users
+      if (key === 'c' || key === 'x') {
+        e.preventDefault();
+        return;
+      }
+
+      // Block Select All outside editable input fields
+      if (key === 'a' && !isEditableTarget(e.target)) {
+        e.preventDefault();
+      }
+    };
+
+    document.addEventListener('copy', handleBlockClipboard);
+    document.addEventListener('cut', handleBlockClipboard);
+    document.addEventListener('contextmenu', handleBlockNonEditable);
+    document.addEventListener('selectstart', handleBlockNonEditable);
+    document.addEventListener('dragstart', handleBlockNonEditable);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('copy', handleBlockClipboard);
+      document.removeEventListener('cut', handleBlockClipboard);
+      document.removeEventListener('contextmenu', handleBlockNonEditable);
+      document.removeEventListener('selectstart', handleBlockNonEditable);
+      document.removeEventListener('dragstart', handleBlockNonEditable);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isSuperAdmin]);
+
   // Real-time Firestore listener for schools (Public Read)
   useEffect(() => {
     if (!authReady) return;
@@ -794,7 +864,9 @@ function MainApp() {
 
   const mainContent = (
     <div
-      className={`flex flex-col h-[100dvh] w-full overflow-hidden font-sans select-none transition-colors duration-200 ${
+      className={`flex flex-col h-[100dvh] w-full overflow-hidden font-sans transition-colors duration-200 ${
+        isSuperAdmin ? 'select-text' : 'select-none'
+      } ${
         isLight
           ? 'bg-[#f8fafc] text-slate-900'
           : 'bg-[#111e17] text-[#f2ede0]'

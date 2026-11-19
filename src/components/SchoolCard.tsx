@@ -33,10 +33,16 @@ export const SchoolCard: React.FC<SchoolCardProps> = ({
 
   const cleanTel = (contact: string) => contact.replace(/[^0-9+]/g, '');
 
+  const handleCardClick = () => {
+    const selectedText = window.getSelection()?.toString().trim();
+    if (selectedText) return;
+    onSelect(school);
+  };
+
   if (isLight) {
     return (
       <div
-        onClick={() => onSelect(school)}
+        onClick={handleCardClick}
         className={`group relative p-4 sm:p-4.5 rounded-2xl border transition-all cursor-pointer ${
           isSelected
             ? 'bg-blue-50/40 border-blue-500 shadow-md ring-1 ring-blue-500/80'
@@ -147,7 +153,7 @@ export const SchoolCard: React.FC<SchoolCardProps> = ({
 
   return (
     <div
-      onClick={() => onSelect(school)}
+      onClick={handleCardClick}
       className={`group relative p-3.5 sm:p-4 rounded-2xl border transition-all cursor-pointer ${
         isSelected
           ? 'bg-[#1e3428] border-amber-500 shadow-xl shadow-black/50 ring-1 ring-amber-500/80 scale-[1.01]'

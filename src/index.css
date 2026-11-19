@@ -6,6 +6,34 @@
   }
 }
 
+/* Strict copy/selection protection for public visitors and non-Super-Admin users */
+body.copy-protected,
+body.copy-protected * {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+body.copy-protected input,
+body.copy-protected textarea,
+body.copy-protected [contenteditable="true"] {
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  user-select: text;
+}
+
+/* Unlocked native selection exclusively for verified Super Admin */
+body.copy-unlocked {
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
 .font-heading {
   font-family: 'Fraunces', Georgia, serif;
 }
