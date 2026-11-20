@@ -126,11 +126,78 @@ service cloud.firestore {
         data.timestamp is string && data.timestamp.size() >= 1 && data.timestamp.size() <= 100 &&
         data.action in [
           'ADD_SCHOOL', 'EDIT_SCHOOL', 'DELETE_SCHOOL',
-          'RESET_DATA', 'IMPORT_DATA', 'MANAGE_ROUTE', 'MANAGE_STAFF'
+          'RESET_DATA', 'IMPORT_DATA', 'MANAGE_ROUTE', 'MANAGE_STAFF',
+          'TOGGLE_EMAIL_VERIFICATION', 'UPDATE_EMAIL_POLICY',
+          'REVOKE_USER_ACCESS', 'REVOKE_ALL_USERS'
         ] &&
         data.summary is string && data.summary.size() >= 1 && data.summary.size() <= 400 &&
         data.adminEmail is string && data.adminEmail.size() >= 1 && data.adminEmail.size() <= 150 &&
         (!('updatedByStaffId' in data) || (data.updatedByStaffId is string && data.updatedByStaffId.size() <= 100));
+    }
+
+    // Validation Blueprint for VerificationStatus toggle & global revocation doc
+    function isValidVerificationStatus(data) {
+      return data.keys().hasAll(['enabled', 'updatedAt', 'updatedBy']) &&
+        data.keys().hasOnly(['enabled', 'revokedAllBeforeMs', 'updatedAt', 'updatedBy']) &&
+        data.enabled is bool &&
+        (!('revokedAllBeforeMs' in data) || (data.revokedAllBeforeMs is number && data.revokedAllBeforeMs >= 0)) &&
+        data.updatedAt is string && data.updatedAt.size() >= 1 && data.updatedAt.size() <= 100 &&
+        data.updatedBy is string && data.updatedBy.size() >= 1 && data.updatedBy.size() <= 150;
+    }
+
+    // Validation Blueprint for private OrgVerificationPolicy doc
+    function isValidOrgPolicy(data) {
+      return data.keys().hasAll(['allowedDomains', 'authorizedEmails', 'updatedAt', 'updatedBy']) &&
+        data.keys().hasOnly(['allowedDomains', 'authorizedEmails', 'updatedAt', 'updatedBy']) &&
+        data.allowedDomains is list && data.allowedDomains.size() <= 20 &&
+        (data.allowedDomains.size() == 0 || (data.allowedDomains[0] is string && data.allowedDomains[0].size() <= 100)) &&
+        data.authorizedEmails is list && data.authorizedEmails.size() <= 100 &&
+        (data.authorizedEmails.size() == 0 || (data.authorizedEmails[0] is string && data.authorizedEmails[0].size() <= 150)) &&
+        data.updatedAt is string && data.updatedAt.size() >= 1 && data.updatedAt.size() <= 100 &&
+        data.updatedBy is string && data.updatedBy.size() >= 1 && data.updatedBy.size() <= 150;
+    }
+
+    // Validation Blueprint for AccessLog entity (enforces max 2-day / 48-hour session window)
+    function isValidAccessLog(data, logId) {
+      return data.keys().hasAll(['id', 'email', 'accessedAt', 'accessedAtMs', 'expiresAt', 'expiresAtMs']) &&
+        data.keys().hasOnly(['id', 'email', 'accessedAt', 'accessedAtMs', 'expiresAt', 'expiresAtMs', 'deviceInfo', 'revoked', 'revokedAt', 'revokedAtMs']) &&
+        data.id is string && data.id == logId && data.id.size() >= 1 && data.id.size() <= 100 &&
+        data.email is string && data.email.size() >= 5 && data.email.size() <= 150 &&
+        data.accessedAt is string && data.accessedAt.size() >= 1 && data.accessedAt.size() <= 100 &&
+        data.accessedAtMs is number && data.accessedAtMs > 0 &&
+        data.expiresAt is string && data.expiresAt.size() >= 1 && data.expiresAt.size() <= 100 &&
+        data.expiresAtMs is number && data.expiresAtMs > data.accessedAtMs &&
+        (data.expiresAtMs - data.accessedAtMs) <= 172800000 &&
+        (!('deviceInfo' in data) || (data.deviceInfo is string && data.deviceInfo.size() <= 150)) &&
+        (!('revoked' in data) || data.revoked is bool) &&
+        (!('revokedAt' in data) || (data.revokedAt is string && data.revokedAt.size() <= 100)) &&
+        (!('revokedAtMs' in data) || (data.revokedAtMs is number && data.revokedAtMs > 0));
+    }
+
+    // Validation Blueprint for zero-PII RevokedSession tombstone
+    function isValidRevokedSession(data, logId) {
+      return data.keys().hasAll(['id', 'revokedAtMs']) &&
+        data.keys().hasOnly(['id', 'revokedAtMs']) &&
+        data.id is string && data.id == logId && data.id.size() >= 1 && data.id.size() <= 100 &&
+        data.revokedAtMs is number && data.revokedAtMs > 0;
+    }
+
+    // Backend Organization Email Authorization Check (Strictly enforced in Firebase, never exposed in public client code)
+    function isAllowedOrgEmail(email) {
+      let lowerEmail = email.lower();
+      let parts = lowerEmail.split('@');
+      let validFormat = lowerEmail.matches('^[a-z0-9._%+\\-]+@[a-z0-9.\\-]+\\.[a-z]{2,}$') && parts.size() == 2;
+      let policyPath = /databases/$(database)/documents/app_settings/org_verification_policy;
+      return validFormat && (
+        exists(policyPath)
+          ? (
+              (get(policyPath).data.allowedDomains is list && get(policyPath).data.allowedDomains.size() > 0
+                ? (parts[1] in get(policyPath).data.allowedDomains)
+                : (parts[1] == 'akshayapatra.org')) ||
+              (get(policyPath).data.authorizedEmails is list && lowerEmail in get(policyPath).data.authorizedEmails)
+            )
+          : (parts[1] == 'akshayapatra.org')
+      );
     }
 
     // Connection test document (read-only check)
@@ -171,6 +238,39 @@ service cloud.firestore {
       allow list: if isAuthorizedAdmin() && resource.data.id is string;
       allow create: if isSignedIn() && request.auth.token.email_verified == true && isValidId(logId) && isValidAuditLog(incoming()) && isAuthorizedWriter();
       allow update, delete: if false;
+    }
+
+    // Public Verification Toggle Status (Contains ONLY enabled boolean & global revocation ms - zero domains or emails exposed)
+    match /app_settings/verification_status {
+      allow get: if true;
+      allow list: if false;
+      allow create, update: if isAuthorizedAdmin() && isValidVerificationStatus(incoming());
+      allow delete: if false;
+    }
+
+    // Private Organization Verification Policy (Strictly Super Admin only; evaluated server-side in rules)
+    match /app_settings/org_verification_policy {
+      allow get: if isAuthorizedAdmin();
+      allow list: if false;
+      allow create, update: if isAuthorizedAdmin() && isValidOrgPolicy(incoming());
+      allow delete: if false;
+    }
+
+    // Organization Access Logs: Creates verified by Firebase backend; reads & revocation updates strictly Super Admin only
+    match /access_logs/{logId} {
+      allow get: if isAuthorizedAdmin() && isValidId(logId);
+      allow list: if isAuthorizedAdmin() && resource.data.id is string;
+      allow create: if isValidId(logId) && isValidAccessLog(incoming(), logId) && !('revoked' in incoming()) && isAllowedOrgEmail(incoming().email);
+      allow update: if isAuthorizedAdmin() && isValidId(logId) && isValidAccessLog(incoming(), logId) && incoming().diff(resource.data).affectedKeys().hasOnly(['revoked', 'revokedAt', 'revokedAtMs']);
+      allow delete: if false;
+    }
+
+    // Zero-PII Revoked Sessions: Allows any client to check ONLY its own opaque session ID for instant admin revocation
+    match /revoked_sessions/{logId} {
+      allow get: if isValidId(logId);
+      allow list: if isAuthorizedAdmin();
+      allow create, update: if isAuthorizedAdmin() && isValidId(logId) && isValidRevokedSession(incoming(), logId);
+      allow delete: if isAuthorizedAdmin() && isValidId(logId);
     }
   }
 }

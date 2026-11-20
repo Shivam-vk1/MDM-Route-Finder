@@ -79,7 +79,19 @@
         "timestamp": { "type": "string", "maxLength": 100, "description": "Formatted timestamp" },
         "action": {
           "type": "string",
-          "enum": ["ADD_SCHOOL", "EDIT_SCHOOL", "DELETE_SCHOOL", "RESET_DATA", "IMPORT_DATA", "MANAGE_ROUTE", "MANAGE_STAFF"],
+          "enum": [
+            "ADD_SCHOOL",
+            "EDIT_SCHOOL",
+            "DELETE_SCHOOL",
+            "RESET_DATA",
+            "IMPORT_DATA",
+            "MANAGE_ROUTE",
+            "MANAGE_STAFF",
+            "TOGGLE_EMAIL_VERIFICATION",
+            "UPDATE_EMAIL_POLICY",
+            "REVOKE_USER_ACCESS",
+            "REVOKE_ALL_USERS"
+          ],
           "maxLength": 50,
           "description": "Type of administrative action"
         },
@@ -88,6 +100,58 @@
         "updatedByStaffId": { "type": "string", "maxLength": 100, "description": "Optional staff member ID" }
       },
       "required": ["id", "timestamp", "action", "summary", "adminEmail"]
+    },
+    "VerificationStatus": {
+      "title": "VerificationStatus",
+      "description": "Non-sensitive ON/OFF toggle and global revocation watermark for Organization Email Verification.",
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "description": "Whether organization email verification gate is active" },
+        "revokedAllBeforeMs": { "type": "number", "description": "Epoch ms before which all previously verified sessions are invalidated" },
+        "updatedAt": { "type": "string", "maxLength": 100, "description": "ISO timestamp of last toggle/revocation change" },
+        "updatedBy": { "type": "string", "maxLength": 150, "description": "Admin email who updated status" }
+      },
+      "required": ["enabled", "updatedAt", "updatedBy"]
+    },
+    "OrgVerificationPolicy": {
+      "title": "OrgVerificationPolicy",
+      "description": "Private Firebase-only policy defining allowed email domains and explicitly authorized email IDs.",
+      "type": "object",
+      "properties": {
+        "allowedDomains": { "type": "array", "description": "List of authorized email domains (max 20)" },
+        "authorizedEmails": { "type": "array", "description": "List of explicitly authorized individual email addresses (max 100)" },
+        "updatedAt": { "type": "string", "maxLength": 100, "description": "ISO timestamp of last policy update" },
+        "updatedBy": { "type": "string", "maxLength": 150, "description": "Admin email who updated policy" }
+      },
+      "required": ["allowedDomains", "authorizedEmails", "updatedAt", "updatedBy"]
+    },
+    "AccessLog": {
+      "title": "AccessLog",
+      "description": "Record of verified organization email addresses accessing the application and optional admin revocation metadata.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 100, "description": "Unique access log document ID" },
+        "email": { "type": "string", "maxLength": 150, "description": "Verified organization email ID" },
+        "accessedAt": { "type": "string", "maxLength": 100, "description": "Formatted IST timestamp of access" },
+        "accessedAtMs": { "type": "number", "description": "Epoch milliseconds when access occurred" },
+        "expiresAt": { "type": "string", "maxLength": 100, "description": "Formatted IST timestamp when 2-day session expires" },
+        "expiresAtMs": { "type": "number", "description": "Epoch milliseconds when 2-day session expires" },
+        "deviceInfo": { "type": "string", "maxLength": 150, "description": "Browser/device summary" },
+        "revoked": { "type": "boolean", "description": "Whether this session was manually revoked by Super Admin before 48h expiry" },
+        "revokedAt": { "type": "string", "maxLength": 100, "description": "Formatted IST timestamp of revocation" },
+        "revokedAtMs": { "type": "number", "description": "Epoch milliseconds when session was revoked" }
+      },
+      "required": ["id", "email", "accessedAt", "accessedAtMs", "expiresAt", "expiresAtMs"]
+    },
+    "RevokedSession": {
+      "title": "RevokedSession",
+      "description": "Zero-PII session revocation marker keyed by opaque access log ID for instant single-user kickout.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 100, "description": "Opaque access log ID being revoked" },
+        "revokedAtMs": { "type": "number", "description": "Epoch milliseconds when revoked" }
+      },
+      "required": ["id", "revokedAtMs"]
     }
   },
   "firestore": {
@@ -105,7 +169,23 @@
     },
     "/audit_logs/{logId}": {
       "schema": { "$ref": "#/entities/AuditLog" },
-      "description": "Audit log recording school, route, and staff modifications."
+      "description": "Audit log recording school, route, staff, and verification settings modifications."
+    },
+    "/app_settings/verification_status": {
+      "schema": { "$ref": "#/entities/VerificationStatus" },
+      "description": "Single non-PII toggle and global revocation timestamp controlling organization email verification."
+    },
+    "/app_settings/org_verification_policy": {
+      "schema": { "$ref": "#/entities/OrgVerificationPolicy" },
+      "description": "Private backend verification policy (allowed domains & emails); readable and writable exclusively by Super Admin."
+    },
+    "/access_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AccessLog" },
+      "description": "Organization email access log; creates are backend-verified via Firestore rules, reads & revocation updates strictly restricted to Super Admin."
+    },
+    "/revoked_sessions/{logId}": {
+      "schema": { "$ref": "#/entities/RevokedSession" },
+      "description": "Zero-PII single-session revocation tombstones; targeted get by exact ID allows clients to detect immediate revocation without exposing emails."
     }
   }
 }

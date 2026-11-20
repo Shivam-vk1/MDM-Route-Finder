@@ -50,6 +50,33 @@ export interface StaffMember {
   updatedAt?: string;
 }
 
+export interface AccessLogEntry {
+  id: string;
+  email: string;
+  accessedAt: string;
+  accessedAtMs: number;
+  expiresAt: string;
+  expiresAtMs: number;
+  deviceInfo?: string;
+  revoked?: boolean;
+  revokedAt?: string;
+  revokedAtMs?: number;
+}
+
+export interface OrgVerificationSession {
+  email: string;
+  logId: string;
+  verifiedAtMs: number;
+  expiresAtMs: number;
+}
+
+export interface OrgVerificationPolicy {
+  allowedDomains: string[];
+  authorizedEmails: string[];
+  updatedAt: string;
+  updatedBy: string;
+}
+
 export const ROUTE_COLORS: Record<string, string> = {
   'BAIRI': '#e8a33d',
   'Barra': '#7fb298',

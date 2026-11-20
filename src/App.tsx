@@ -4,6 +4,7 @@ import {
   School, 
   RouteConfig, 
   StaffMember, 
+  OrgVerificationSession,
   DEFAULT_ROUTES, 
   TAPF_LOGO_URL, 
   getRouteColor, 
@@ -18,6 +19,7 @@ import { ExcelUploadModal } from './components/ExcelUploadModal';
 import { AdminPanelModal } from './components/AdminPanelModal';
 import { SchoolFormModal } from './components/SchoolFormModal';
 import { AdminLoginModal } from './components/AdminLoginModal';
+import { OrgEmailGateModal } from './components/OrgEmailGateModal';
 import { 
   logSecurityAudit, 
   getStoredRoutes, 
@@ -26,7 +28,10 @@ import {
   saveStaffMembersToStorage,
   getLoggedInStaff,
   setLoggedInStaff,
-  logoutAdmin
+  logoutAdmin,
+  getValidOrgVerificationSession,
+  clearOrgVerificationSession,
+  setOrgVerificationEnabled
 } from './utils/security';
 import { 
   db, 
@@ -166,9 +171,18 @@ function MainApp() {
     [isSuperAdmin, activeStaff]
   );
 
+  // Organization Email Verification State (Firebase-synced ON/OFF toggle + 2-day verified session + instant revocation)
+  const [orgVerificationEnabled, setOrgVerificationEnabledState] = useState<boolean>(true);
+  const [revokedAllBeforeMs, setRevokedAllBeforeMs] = useState<number>(0);
+  const [verificationStatusLoaded, setVerificationStatusLoaded] = useState<boolean>(false);
+  const [isTogglingOrgVerification, setIsTogglingOrgVerification] = useState<boolean>(false);
+  const [orgSession, setOrgSession] = useState<OrgVerificationSession | null>(() =>
+    getValidOrgVerificationSession()
+  );
+
   // Modals state
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
-  const [adminInitialTab, setAdminInitialTab] = useState<'schools' | 'routes' | 'staff' | 'audit'>('schools');
+  const [adminInitialTab, setAdminInitialTab] = useState<'schools' | 'routes' | 'staff' | 'access' | 'audit'>('schools');
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [schoolToEdit, setSchoolToEdit] = useState<School | null>(null);
   const [isExcelModalOpen, setIsExcelModalOpen] = useState(false);
@@ -208,6 +222,83 @@ function MainApp() {
       setAuthReady(true);
     });
     return () => unsub();
+  }, []);
+
+  // Real-time Firestore listener for Organization Email Verification ON/OFF toggle & global revocation watermark
+  useEffect(() => {
+    const statusRef = doc(db, 'app_settings', 'verification_status');
+    const unsub = onSnapshot(
+      statusRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          if (typeof data?.enabled === 'boolean') {
+            setOrgVerificationEnabledState(data.enabled);
+          } else {
+            setOrgVerificationEnabledState(true);
+          }
+          const globalRevokeMs =
+            typeof data?.revokedAllBeforeMs === 'number' && data.revokedAllBeforeMs > 0
+              ? data.revokedAllBeforeMs
+              : 0;
+          setRevokedAllBeforeMs(globalRevokeMs);
+        } else {
+          // Default ON until Super Admin explicitly toggles OFF in Firebase
+          setOrgVerificationEnabledState(true);
+          setRevokedAllBeforeMs(0);
+        }
+        setVerificationStatusLoaded(true);
+      },
+      (error) => {
+        console.warn('Could not read verification_status from Firebase:', error);
+        setVerificationStatusLoaded(true);
+      }
+    );
+
+    return () => unsub();
+  }, []);
+
+  // Instantly revoke this browser's session if Admin clicked "Remove All Active Users" after this user verified
+  useEffect(() => {
+    if (isSuperAdmin || !orgSession || revokedAllBeforeMs <= 0) return;
+    if (orgSession.verifiedAtMs < revokedAllBeforeMs) {
+      clearOrgVerificationSession();
+      setOrgSession(null);
+      showToast('Your access session was ended by Admin. Please verify your email again.');
+    }
+  }, [orgSession, revokedAllBeforeMs, isSuperAdmin]);
+
+  // Real-time Firestore listener for single-user instant session revocation (zero-PII opaque logId)
+  useEffect(() => {
+    if (isSuperAdmin || !orgSession?.logId) return;
+    const revokedRef = doc(db, 'revoked_sessions', orgSession.logId);
+    const unsub = onSnapshot(
+      revokedRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          clearOrgVerificationSession();
+          setOrgSession(null);
+          showToast('Your access session was removed by Admin. Please verify your email again.');
+        }
+      },
+      (error) => {
+        console.warn('Could not listen to session revocation status:', error);
+      }
+    );
+
+    return () => unsub();
+  }, [orgSession?.logId, isSuperAdmin]);
+
+  // Re-check 2-day (48-hour) verification expiry periodically while app stays open
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const valid = getValidOrgVerificationSession();
+      setOrgSession((prev) => {
+        if (!valid && prev) return null;
+        return prev;
+      });
+    }, 60_000);
+    return () => window.clearInterval(timer);
   }, []);
 
   // Strict Copy & Text Selection Protection: Unlocked ONLY for verified Super Admin
@@ -458,13 +549,30 @@ function MainApp() {
   }, [schools, searchQuery, activeRoute]);
 
   // Secure trigger for Admin Console
-  const handleOpenAdmin = (tab: 'schools' | 'routes' | 'staff' | 'audit' = 'schools') => {
+  const handleOpenAdmin = (tab: 'schools' | 'routes' | 'staff' | 'access' | 'audit' = 'schools') => {
     setAdminInitialTab(tab);
     if (isAdmin) {
       setIsAdminModalOpen(true);
     } else {
       setPendingAction(tab === 'routes' ? 'ROUTES' : tab === 'staff' ? 'STAFF' : 'ADMIN');
       setIsLoginModalOpen(true);
+    }
+  };
+
+  // Super Admin single ON/OFF toggle handler for Organization Email Verification
+  const handleToggleOrgVerification = async (enabled: boolean) => {
+    if (!isSuperAdmin) {
+      showToast('Only Super Admin can change email verification settings');
+      return;
+    }
+    setIsTogglingOrgVerification(true);
+    const res = await setOrgVerificationEnabled(enabled, revokedAllBeforeMs);
+    setIsTogglingOrgVerification(false);
+    if (res.success) {
+      setOrgVerificationEnabledState(enabled);
+      showToast(`Organization Email Verification turned ${enabled ? 'ON' : 'OFF'}`);
+    } else {
+      showToast(res.error || 'Failed to update verification setting');
     }
   };
 
@@ -1505,6 +1613,11 @@ function MainApp() {
           initialTab={adminInitialTab}
           theme={theme}
           onToggleTheme={toggleTheme}
+          orgVerificationEnabled={orgVerificationEnabled}
+          onToggleOrgVerification={handleToggleOrgVerification}
+          isTogglingOrgVerification={isTogglingOrgVerification}
+          revokedAllBeforeMs={revokedAllBeforeMs}
+          onNotify={showToast}
         />
 
         {/* School Form Modal (Add / Edit) */}
@@ -1531,12 +1644,48 @@ function MainApp() {
           theme={theme}
         />
 
-        {/* Notice & Quick Guide Modal */}
-        <NoticeModal
-          forceShow={showNoticeModal}
-          onClose={() => setShowNoticeModal(false)}
+        {/* Initial neutral verification status check screen (prevents flashing protected content) */}
+        {!verificationStatusLoaded && !isSuperAdmin && !orgSession && (
+          <div
+            className={`fixed inset-0 flex items-center justify-center p-4 ${
+              isLight ? 'bg-slate-50 text-slate-700' : 'bg-[#111e17] text-[#f2ede0]'
+            }`}
+            style={{ zIndex: 6400 }}
+          >
+            <div className="flex flex-col items-center gap-3 text-center">
+              <img
+                src={TAPF_LOGO_URL}
+                alt="Organization Logo"
+                className="h-12 w-auto object-contain rounded-xl bg-white px-2.5 py-1 shadow-xs"
+                referrerPolicy="no-referrer"
+              />
+              <p className="text-xs font-medium opacity-80">Checking access permissions...</p>
+            </div>
+          </div>
+        )}
+
+        {/* Organization Email Verification Gate (Firebase Backend Verified + 2-Day Memory) */}
+        <OrgEmailGateModal
+          isOpen={verificationStatusLoaded && orgVerificationEnabled && !isSuperAdmin && !orgSession}
+          onVerified={(session) => {
+            setOrgSession(session);
+            showToast('Organization email verified for 2 days');
+          }}
+          onOpenAdminLogin={() => {
+            setPendingAction('ADMIN');
+            setIsLoginModalOpen(true);
+          }}
           theme={theme}
         />
+
+        {/* Notice & Quick Guide Modal (Shown only after Organization Email Verification passes) */}
+        {verificationStatusLoaded && (!orgVerificationEnabled || isSuperAdmin || Boolean(orgSession)) && (
+          <NoticeModal
+            forceShow={showNoticeModal}
+            onClose={() => setShowNoticeModal(false)}
+            theme={theme}
+          />
+        )}
       </div>
   );
 

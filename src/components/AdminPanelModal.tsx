@@ -3,6 +3,8 @@ import {
   School, 
   RouteConfig, 
   StaffMember, 
+  AccessLogEntry,
+  OrgVerificationPolicy,
   ROUTE_COLOR_PALETTE, 
   TAPF_LOGO_URL,
   getRouteColor 
@@ -32,11 +34,21 @@ import {
   Sun,
   Moon,
   Truck,
-  Phone
+  Phone,
+  RefreshCw,
+  Clock,
+  Globe,
+  Lock,
+  UserX
 } from 'lucide-react';
 import { 
   logoutAdmin, 
   fetchCloudAuditLogs, 
+  fetchCloudAccessLogs,
+  fetchOrgVerificationPolicy,
+  saveOrgVerificationPolicy,
+  revokeSingleOrgUserSession,
+  revokeAllActiveOrgUsers,
   logSecurityAudit, 
   AuditLogEntry,
   hashStaffPassword,
@@ -61,9 +73,14 @@ interface AdminPanelModalProps {
   currentUser: User | null;
   activeStaff: StaffMember | null;
   isSuperAdmin: boolean;
-  initialTab?: 'schools' | 'routes' | 'staff' | 'audit';
+  initialTab?: 'schools' | 'routes' | 'staff' | 'access' | 'audit';
   theme?: 'dark' | 'light';
   onToggleTheme?: () => void;
+  orgVerificationEnabled: boolean;
+  onToggleOrgVerification: (enabled: boolean) => Promise<void>;
+  isTogglingOrgVerification?: boolean;
+  revokedAllBeforeMs?: number;
+  onNotify?: (message: string) => void;
 }
 
 export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
@@ -85,11 +102,16 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   isSuperAdmin,
   initialTab = 'schools',
   theme = 'light',
-  onToggleTheme
+  onToggleTheme,
+  orgVerificationEnabled,
+  onToggleOrgVerification,
+  isTogglingOrgVerification = false,
+  revokedAllBeforeMs = 0,
+  onNotify
 }) => {
   const isLight = theme === 'light';
 
-  const [activeTab, setActiveTab] = useState<'schools' | 'routes' | 'staff' | 'audit'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'schools' | 'routes' | 'staff' | 'access' | 'audit'>(initialTab);
   const [adminSearch, setAdminSearch] = useState('');
   const [adminRouteFilter, setAdminRouteFilter] = useState('ALL');
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
@@ -131,6 +153,39 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   // Security Audit Logs
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
 
+  // Organization Access Logs & Firebase Verification Policy (Super Admin Only)
+  const [accessLogs, setAccessLogs] = useState<AccessLogEntry[]>([]);
+  const [loadingAccessLogs, setLoadingAccessLogs] = useState(false);
+  const [accessLogSearch, setAccessLogSearch] = useState('');
+  const [orgPolicy, setOrgPolicy] = useState<OrgVerificationPolicy | null>(null);
+  const [newDomainInput, setNewDomainInput] = useState('');
+  const [newEmailInput, setNewEmailInput] = useState('');
+  const [savingPolicy, setSavingPolicy] = useState(false);
+  const [policyStatusMsg, setPolicyStatusMsg] = useState<string | null>(null);
+  const [revokingEntryId, setRevokingEntryId] = useState<string | null>(null);
+  const [confirmRevokeAll, setConfirmRevokeAll] = useState(false);
+  const [isRevokingAll, setIsRevokingAll] = useState(false);
+  const [revokeFeedback, setRevokeFeedback] = useState<string | null>(null);
+
+  const loadAccessLogsAndPolicy = async () => {
+    if (!isSuperAdmin) return;
+    setLoadingAccessLogs(true);
+    try {
+      const [fetchedLogs, fetchedPolicy] = await Promise.all([
+        fetchCloudAccessLogs(),
+        fetchOrgVerificationPolicy(),
+      ]);
+      setAccessLogs(fetchedLogs);
+      if (fetchedPolicy) {
+        setOrgPolicy(fetchedPolicy);
+      }
+    } catch (err) {
+      console.warn('Access logs / policy load error:', err);
+    } finally {
+      setLoadingAccessLogs(false);
+    }
+  };
+
   useEffect(() => {
     if (isOpen && initialTab) {
       setActiveTab(initialTab);
@@ -142,8 +197,189 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       fetchCloudAuditLogs()
         .then(setLogs)
         .catch((err) => console.warn('Audit log load error:', err));
+      if (isSuperAdmin) {
+        loadAccessLogsAndPolicy();
+      }
     }
-  }, [isOpen, activeTab]);
+  }, [isOpen, activeTab, isSuperAdmin]);
+
+  const isEntryRevoked = (entry: AccessLogEntry) =>
+    Boolean(entry.revoked) || (revokedAllBeforeMs > 0 && entry.accessedAtMs < revokedAllBeforeMs);
+
+  const isEntryActive = (entry: AccessLogEntry) =>
+    !isEntryRevoked(entry) && Date.now() < entry.expiresAtMs;
+
+  const activeAccessLogs = useMemo(
+    () => accessLogs.filter((entry) => !entry.revoked && !(revokedAllBeforeMs > 0 && entry.accessedAtMs < revokedAllBeforeMs) && Date.now() < entry.expiresAtMs),
+    [accessLogs, revokedAllBeforeMs]
+  );
+
+  const filteredAccessLogs = useMemo(() => {
+    const q = accessLogSearch.trim().toLowerCase();
+    if (!q) return accessLogs;
+    return accessLogs.filter(
+      (entry) =>
+        entry.email.toLowerCase().includes(q) ||
+        (entry.accessedAt || '').toLowerCase().includes(q) ||
+        (entry.deviceInfo || '').toLowerCase().includes(q)
+    );
+  }, [accessLogs, accessLogSearch]);
+
+  const uniqueAccessEmailsCount = useMemo(() => {
+    return new Set(accessLogs.map((l) => l.email.toLowerCase())).size;
+  }, [accessLogs]);
+
+  const handleRevokeSingleUser = async (entry: AccessLogEntry) => {
+    setRevokingEntryId(entry.id);
+    setRevokeFeedback(null);
+    const res = await revokeSingleOrgUserSession(entry);
+    setRevokingEntryId(null);
+    if (res.success) {
+      setAccessLogs((prev) =>
+        prev.map((item) =>
+          item.id === entry.id
+            ? {
+                ...item,
+                revoked: true,
+                revokedAt: res.revokedAt,
+                revokedAtMs: res.revokedAtMs,
+              }
+            : item
+        )
+      );
+      const msg = `Removed active session for ${entry.email}. They must verify again.`;
+      setRevokeFeedback(msg);
+      onNotify?.(msg);
+    } else {
+      setRevokeFeedback(res.error || 'Could not remove user session.');
+    }
+  };
+
+  const handleRevokeAllActiveUsers = async () => {
+    setIsRevokingAll(true);
+    setRevokeFeedback(null);
+    const res = await revokeAllActiveOrgUsers(orgVerificationEnabled, activeAccessLogs);
+    setIsRevokingAll(false);
+    setConfirmRevokeAll(false);
+    if (res.success) {
+      const revokedIds = new Set(activeAccessLogs.map((e) => e.id));
+      setAccessLogs((prev) =>
+        prev.map((item) =>
+          revokedIds.has(item.id)
+            ? {
+                ...item,
+                revoked: true,
+                revokedAt: res.revokedAt,
+                revokedAtMs: res.revokedAllBeforeMs,
+              }
+            : item
+        )
+      );
+      const msg = `Removed all ${res.count ?? activeAccessLogs.length} active user session(s). Everyone must re-verify.`;
+      setRevokeFeedback(msg);
+      onNotify?.(msg);
+    } else {
+      setRevokeFeedback(res.error || 'Could not remove all active user sessions.');
+    }
+  };
+
+  const handleAddPolicyDomain = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleaned = sanitizeInput(newDomainInput, 100).toLowerCase().replace(/^@+/, '');
+    if (!cleaned || !cleaned.includes('.') || cleaned.includes('@') || cleaned.includes(' ')) {
+      setPolicyStatusMsg('Please enter a valid domain name (without @).');
+      return;
+    }
+    setSavingPolicy(true);
+    setPolicyStatusMsg(null);
+    const currentDomains = orgPolicy?.allowedDomains || [];
+    const currentEmails = orgPolicy?.authorizedEmails || [];
+    const res = await saveOrgVerificationPolicy([...currentDomains, cleaned], currentEmails);
+    setSavingPolicy(false);
+    if (res.success && res.policy) {
+      setOrgPolicy(res.policy);
+      setNewDomainInput('');
+      setPolicyStatusMsg('Authorized domain saved in Firebase.');
+    } else {
+      setPolicyStatusMsg(res.error || 'Could not save domain.');
+    }
+  };
+
+  const handleRemovePolicyDomain = async (domain: string) => {
+    setSavingPolicy(true);
+    setPolicyStatusMsg(null);
+    const nextDomains = (orgPolicy?.allowedDomains || []).filter((d) => d !== domain);
+    const currentEmails = orgPolicy?.authorizedEmails || [];
+    const res = await saveOrgVerificationPolicy(nextDomains, currentEmails);
+    setSavingPolicy(false);
+    if (res.success && res.policy) {
+      setOrgPolicy(res.policy);
+      setPolicyStatusMsg('Domain removed from Firebase policy.');
+    }
+  };
+
+  const handleAddPolicyEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleaned = sanitizeInput(newEmailInput, 150).toLowerCase();
+    if (!cleaned || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleaned)) {
+      setPolicyStatusMsg('Please enter a valid email address.');
+      return;
+    }
+    setSavingPolicy(true);
+    setPolicyStatusMsg(null);
+    const currentDomains = orgPolicy?.allowedDomains || [];
+    const currentEmails = orgPolicy?.authorizedEmails || [];
+    const res = await saveOrgVerificationPolicy(currentDomains, [...currentEmails, cleaned]);
+    setSavingPolicy(false);
+    if (res.success && res.policy) {
+      setOrgPolicy(res.policy);
+      setNewEmailInput('');
+      setPolicyStatusMsg('Authorized email saved in Firebase.');
+    } else {
+      setPolicyStatusMsg(res.error || 'Could not save email.');
+    }
+  };
+
+  const handleRemovePolicyEmail = async (email: string) => {
+    setSavingPolicy(true);
+    setPolicyStatusMsg(null);
+    const currentDomains = orgPolicy?.allowedDomains || [];
+    const nextEmails = (orgPolicy?.authorizedEmails || []).filter((em) => em !== email);
+    const res = await saveOrgVerificationPolicy(currentDomains, nextEmails);
+    setSavingPolicy(false);
+    if (res.success && res.policy) {
+      setOrgPolicy(res.policy);
+      setPolicyStatusMsg('Email removed from Firebase policy.');
+    }
+  };
+
+  const handleExportAccessLogsCSV = () => {
+    const headers = ['Email ID', 'Status', 'Accessed At (IST)', 'Session Expires At (IST)', 'Revoked At (IST)', 'Device'];
+    const escapeCell = (val: string) => `"${String(val || '').replace(/"/g, '""')}"`;
+    const rows = accessLogs.map((l) => {
+      const status = isEntryRevoked(l)
+        ? 'Revoked'
+        : Date.now() < l.expiresAtMs
+          ? 'Active (48h)'
+          : 'Expired';
+      return [
+        escapeCell(l.email),
+        escapeCell(status),
+        escapeCell(l.accessedAt),
+        escapeCell(l.expiresAt),
+        escapeCell(l.revokedAt || ''),
+        escapeCell(l.deviceInfo || ''),
+      ];
+    });
+    const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `MDM_Org_Access_Logs_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   // Helper to resolve route driver info from route config or matching schools
   const getRouteDriverInfo = (routeName: string, explicitDriver?: string, explicitContact?: string) => {
@@ -598,6 +834,33 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
               <span>CSV</span>
             </button>
 
+            {isSuperAdmin && (
+              <button
+                type="button"
+                role="switch"
+                aria-checked={orgVerificationEnabled}
+                disabled={isTogglingOrgVerification}
+                onClick={() => onToggleOrgVerification(!orgVerificationEnabled)}
+                className={`inline-flex items-center justify-center gap-2 px-3 py-2 sm:py-1.5 rounded-xl text-xs font-bold border transition-all active:scale-95 disabled:opacity-60 ${
+                  orgVerificationEnabled
+                    ? isLight
+                      ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700 shadow-xs'
+                      : 'bg-emerald-700 hover:bg-emerald-600 text-white border-emerald-500'
+                    : isLight
+                      ? 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-300'
+                      : 'bg-[#1a2c22] hover:bg-[#21382b] text-slate-300 border-[#2c4436]'
+                }`}
+                title="Toggle Organization Email Verification ON / OFF"
+              >
+                <span
+                  className={`w-2 h-2 rounded-full shrink-0 ${
+                    orgVerificationEnabled ? 'bg-white animate-pulse' : 'bg-slate-400'
+                  }`}
+                />
+                <span>Email Verify: {orgVerificationEnabled ? 'ON' : 'OFF'}</span>
+              </button>
+            )}
+
             <button
               onClick={handleLogout}
               className={`inline-flex items-center justify-center gap-1 px-2.5 sm:px-3 py-2 sm:py-1.5 rounded-xl border text-xs font-semibold transition-colors sm:ml-auto ${
@@ -613,11 +876,11 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
           </div>
         </div>
 
-        {/* Navigation Tabs — 2x2 Grid on Mobile (All Tabs 100% Visible Without Scrolling), Row on Desktop */}
+        {/* Navigation Tabs */}
         <div
           className={`px-3 sm:px-4 py-2 border-b grid ${
-            isSuperAdmin ? 'grid-cols-2' : 'grid-cols-3'
-          } sm:flex sm:items-center gap-1.5 sm:gap-2 text-xs shrink-0 ${
+            isSuperAdmin ? 'grid-cols-2 sm:flex' : 'grid-cols-3 sm:flex'
+          } sm:items-center gap-1.5 sm:gap-2 text-xs shrink-0 flex-wrap ${
             isLight
               ? 'bg-white border-slate-200'
               : 'bg-[#111f18] border-[#2c4436]'
@@ -670,6 +933,24 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
             >
               <Users className="w-3.5 h-3.5 shrink-0" />
               <span className="truncate">TAPF Staff ({staffMembers.length})</span>
+            </button>
+          )}
+
+          {isSuperAdmin && (
+            <button
+              onClick={() => setActiveTab('access')}
+              className={`px-2.5 sm:px-3.5 py-2 sm:py-1.5 rounded-xl font-semibold transition-colors flex items-center justify-center sm:justify-start gap-1.5 ${
+                activeTab === 'access'
+                  ? isLight
+                    ? 'bg-[#0f172a] text-white shadow-xs'
+                    : 'bg-[#21382b] text-amber-300 border border-[#2c4436]'
+                  : isLight
+                    ? 'bg-slate-100/80 sm:bg-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                    : 'bg-[#16271e] sm:bg-transparent text-slate-400 hover:text-white'
+              }`}
+            >
+              <Mail className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">Email Access ({accessLogs.length})</span>
             </button>
           )}
 
@@ -1617,7 +1898,437 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
           </div>
         )}
 
-        {/* TAB 4: SECURITY AUDIT LOGS */}
+        {/* TAB 4: ORGANIZATION EMAIL ACCESS & LOGS (SUPER ADMIN ONLY) */}
+        {activeTab === 'access' && isSuperAdmin && (
+          <div className="flex-1 p-4 overflow-y-auto space-y-4 text-xs">
+            {/* Single Master ON/OFF Toggle Card */}
+            <div className={`border rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${cardBaseClass}`}>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Lock className={`w-4 h-4 ${isLight ? 'text-blue-600' : 'text-amber-400'}`} />
+                  <h3 className={`text-sm font-heading font-bold ${isLight ? 'text-slate-900' : 'text-[#f2ede0]'}`}>
+                    Organization Email Verification Gate
+                  </h3>
+                  <span
+                    className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide ${
+                      orgVerificationEnabled
+                        ? isLight
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                        : isLight
+                          ? 'bg-slate-200 text-slate-600'
+                          : 'bg-slate-800 text-slate-300'
+                    }`}
+                  >
+                    {orgVerificationEnabled ? 'ON' : 'OFF'}
+                  </span>
+                </div>
+                <p className={`text-xs leading-relaxed ${isLight ? 'text-slate-500' : 'text-[#a4b3ab]'}`}>
+                  When ON, visitors must verify their organization email via Firebase backend before opening the application. Verified devices stay remembered for 2 days (48 hours).
+                </p>
+              </div>
+
+              <button
+                type="button"
+                role="switch"
+                aria-checked={orgVerificationEnabled}
+                disabled={isTogglingOrgVerification}
+                onClick={() => onToggleOrgVerification(!orgVerificationEnabled)}
+                className={`shrink-0 inline-flex items-center gap-3 px-4 py-2.5 rounded-2xl border font-bold text-xs transition-all active:scale-95 disabled:opacity-60 ${
+                  orgVerificationEnabled
+                    ? isLight
+                      ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700 shadow-sm'
+                      : 'bg-emerald-700 hover:bg-emerald-600 text-white border-emerald-500'
+                    : isLight
+                      ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
+                      : 'bg-[#1a2c22] hover:bg-[#21382b] text-slate-300 border-[#2c4436]'
+                }`}
+              >
+                <span
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                    orgVerificationEnabled ? 'bg-white/30' : 'bg-slate-400/50'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
+                      orgVerificationEnabled ? 'translate-x-4.5' : 'translate-x-1'
+                    }`}
+                  />
+                </span>
+                <span>{orgVerificationEnabled ? 'Verification ON' : 'Verification OFF'}</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+              {/* Left / Main Column: Access Log & Active Session Controls */}
+              <div className={`lg:col-span-7 border rounded-2xl p-4 flex flex-col gap-3 ${cardBaseClass}`}>
+                <div className="flex items-start sm:items-center justify-between gap-2 flex-wrap">
+                  <div>
+                    <h4 className={`text-sm font-heading font-bold flex items-center gap-2 flex-wrap ${isLight ? 'text-slate-900' : 'text-[#f2ede0]'}`}>
+                      <Clock className={`w-4 h-4 ${isLight ? 'text-blue-600' : 'text-amber-400'}`} />
+                      <span>Organization Access Log ({accessLogs.length})</span>
+                      <span
+                        className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                          activeAccessLogs.length > 0
+                            ? isLight
+                              ? 'bg-emerald-100 text-emerald-700'
+                              : 'bg-emerald-950 text-emerald-300 border border-emerald-800/70'
+                            : isLight
+                              ? 'bg-slate-200 text-slate-600'
+                              : 'bg-slate-800 text-slate-400'
+                        }`}
+                      >
+                        {activeAccessLogs.length} Active
+                      </span>
+                    </h4>
+                    <p className={`text-[11px] mt-0.5 ${isLight ? 'text-slate-500' : 'text-[#a4b3ab]'}`}>
+                      {uniqueAccessEmailsCount} unique email ID{uniqueAccessEmailsCount === 1 ? '' : 's'} verified · Admin can remove any active user anytime before 48h expiry
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={loadAccessLogsAndPolicy}
+                      disabled={loadingAccessLogs}
+                      className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border font-semibold text-[11px] transition-colors ${
+                        isLight
+                          ? 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
+                          : 'bg-[#1a2c22] hover:bg-[#21382b] text-slate-300 border-[#2c4436]'
+                      }`}
+                    >
+                      <RefreshCw className={`w-3 h-3 ${loadingAccessLogs ? 'animate-spin' : ''}`} />
+                      <span>Refresh</span>
+                    </button>
+                    {accessLogs.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleExportAccessLogsCSV}
+                        className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border font-semibold text-[11px] transition-colors ${
+                          isLight
+                            ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200'
+                            : 'bg-[#21382b] hover:bg-[#2c4436] text-[#7fb298] border-[#2c4436]'
+                        }`}
+                      >
+                        <FileSpreadsheet className="w-3 h-3" />
+                        <span>Export CSV</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Remove All Active Users Control Bar */}
+                <div
+                  className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 ${
+                    isLight
+                      ? 'bg-red-50/70 border-red-200/80'
+                      : 'bg-red-950/25 border-red-900/50'
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <p className={`text-xs font-bold ${isLight ? 'text-red-800' : 'text-red-300'}`}>
+                      Active User Session Control
+                    </p>
+                    <p className={`text-[11px] ${isLight ? 'text-red-700/80' : 'text-red-200/70'}`}>
+                      Immediately log out all currently active users before their 48-hour window expires.
+                    </p>
+                  </div>
+
+                  {confirmRevokeAll ? (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        disabled={isRevokingAll}
+                        onClick={handleRevokeAllActiveUsers}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-[11px] shadow-xs transition-colors disabled:opacity-60"
+                      >
+                        <UserX className="w-3.5 h-3.5" />
+                        <span>{isRevokingAll ? 'Removing...' : 'Confirm Remove All'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isRevokingAll}
+                        onClick={() => setConfirmRevokeAll(false)}
+                        className={`px-2.5 py-1.5 rounded-xl border font-semibold text-[11px] ${
+                          isLight
+                            ? 'bg-white border-slate-200 text-slate-600 hover:text-slate-900'
+                            : 'bg-[#1a2c22] border-[#2c4436] text-slate-300 hover:text-white'
+                        }`}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={activeAccessLogs.length === 0 || isRevokingAll}
+                      onClick={() => setConfirmRevokeAll(true)}
+                      className={`shrink-0 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl border font-bold text-[11px] transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${
+                        isLight
+                          ? 'bg-red-600 hover:bg-red-700 text-white border-red-700 shadow-2xs'
+                          : 'bg-red-700 hover:bg-red-600 text-white border-red-500'
+                      }`}
+                    >
+                      <UserX className="w-3.5 h-3.5" />
+                      <span>Remove All Active Users ({activeAccessLogs.length})</span>
+                    </button>
+                  )}
+                </div>
+
+                {revokeFeedback && (
+                  <div
+                    className={`p-2.5 rounded-xl border text-[11px] font-medium flex items-center justify-between gap-2 ${
+                      isLight
+                        ? 'bg-amber-50 border-amber-200 text-amber-900'
+                        : 'bg-amber-950/40 border-amber-800/60 text-amber-200'
+                    }`}
+                  >
+                    <span>{revokeFeedback}</span>
+                    <button
+                      type="button"
+                      onClick={() => setRevokeFeedback(null)}
+                      className="opacity-70 hover:opacity-100 shrink-0"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Search Access Logs */}
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+                  <input
+                    type="text"
+                    value={accessLogSearch}
+                    onChange={(e) => setAccessLogSearch(e.target.value)}
+                    placeholder="Filter access logs by email ID, date, or device..."
+                    className={`w-full pl-8 pr-3 py-2 border rounded-xl text-xs outline-hidden ${inputBaseClass}`}
+                  />
+                </div>
+
+                {/* Access Log List */}
+                <div
+                  className={`border rounded-xl divide-y max-h-[380px] overflow-y-auto ${
+                    isLight
+                      ? 'bg-slate-50/40 border-slate-200 divide-slate-200'
+                      : 'bg-[#111f18] border-[#2c4436] divide-[#2c4436]'
+                  }`}
+                >
+                  {loadingAccessLogs && accessLogs.length === 0 ? (
+                    <div className="p-6 text-center text-slate-400">
+                      Loading Firebase access logs...
+                    </div>
+                  ) : filteredAccessLogs.length === 0 ? (
+                    <div className="p-6 text-center text-slate-400">
+                      No verified organization access entries recorded yet.
+                    </div>
+                  ) : (
+                    filteredAccessLogs.map((entry) => {
+                      const revoked = isEntryRevoked(entry);
+                      const isSessionActive = isEntryActive(entry);
+                      const isRemovingThis = revokingEntryId === entry.id;
+                      return (
+                        <div key={entry.id} className="p-3 flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={`font-mono font-semibold text-xs break-all ${isLight ? 'text-slate-900' : 'text-[#f2ede0]'}`}>
+                                {entry.email}
+                              </span>
+                              <span
+                                className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                                  revoked
+                                    ? isLight
+                                      ? 'bg-red-100 text-red-700'
+                                      : 'bg-red-950 text-red-300 border border-red-800/70'
+                                    : isSessionActive
+                                      ? isLight
+                                        ? 'bg-emerald-100 text-emerald-700'
+                                        : 'bg-emerald-950 text-emerald-300'
+                                      : isLight
+                                        ? 'bg-slate-200 text-slate-500'
+                                        : 'bg-slate-800 text-slate-400'
+                                }`}
+                              >
+                                {revoked ? 'Revoked' : isSessionActive ? 'Active (48h)' : 'Expired'}
+                              </span>
+                            </div>
+                            <div className={`mt-1 flex items-center gap-2 flex-wrap text-[11px] ${isLight ? 'text-slate-500' : 'text-[#a4b3ab]'}`}>
+                              <span>Accessed: <strong className={isLight ? 'text-slate-700' : 'text-slate-200'}>{entry.accessedAt}</strong></span>
+                              {entry.deviceInfo && <span>· {entry.deviceInfo}</span>}
+                            </div>
+                            <p className={`text-[10px] mt-0.5 ${isLight ? 'text-slate-400' : 'text-[#6c8276]'}`}>
+                              {revoked
+                                ? entry.revokedAt
+                                  ? `Removed by Admin on ${entry.revokedAt}`
+                                  : 'Removed by Admin before 48h expiry'
+                                : `Valid until: ${entry.expiresAt}`}
+                            </p>
+                          </div>
+
+                          {isSessionActive && (
+                            <button
+                              type="button"
+                              disabled={isRemovingThis || isRevokingAll}
+                              onClick={() => handleRevokeSingleUser(entry)}
+                              className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-[11px] font-semibold transition-all active:scale-95 disabled:opacity-60 ${
+                                isLight
+                                  ? 'bg-red-50 hover:bg-red-100 text-red-700 border-red-200'
+                                  : 'bg-red-950/50 hover:bg-red-900/70 text-red-300 border-red-800/60'
+                              }`}
+                              title="Remove this user's active session immediately"
+                            >
+                              <UserX className="w-3.5 h-3.5" />
+                              <span>{isRemovingThis ? 'Removing...' : 'Remove'}</span>
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* Right Column: Private Firebase Backend Policy Manager */}
+              <div className={`lg:col-span-5 border rounded-2xl p-4 h-fit space-y-4 ${cardBaseClass}`}>
+                <div>
+                  <h4 className={`text-sm font-heading font-bold flex items-center gap-1.5 ${isLight ? 'text-blue-600' : 'text-amber-400'}`}>
+                    <Globe className="w-4 h-4" />
+                    <span>Firebase Verification Policy</span>
+                  </h4>
+                  <p className={`text-[11px] mt-1 leading-relaxed ${isLight ? 'text-slate-500' : 'text-[#a4b3ab]'}`}>
+                    Stored privately in Firebase backend rules and Firestore (never exposed in client source code). Default backend organization rule remains active unless custom domains are configured below.
+                  </p>
+                </div>
+
+                {policyStatusMsg && (
+                  <div
+                    className={`p-2.5 rounded-xl border text-[11px] font-medium ${
+                      isLight
+                        ? 'bg-blue-50 border-blue-200 text-blue-700'
+                        : 'bg-emerald-950/60 border-emerald-800 text-emerald-200'
+                    }`}
+                  >
+                    {policyStatusMsg}
+                  </div>
+                )}
+
+                {/* Allowed Domains in Firebase */}
+                <div className="space-y-2">
+                  <label className={`block font-semibold text-xs ${isLight ? 'text-slate-700' : 'text-[#f2ede0]'}`}>
+                    Custom Allowed Domains (Firebase)
+                  </label>
+                  <form onSubmit={handleAddPolicyDomain} className="flex gap-1.5">
+                    <input
+                      type="text"
+                      value={newDomainInput}
+                      onChange={(e) => setNewDomainInput(e.target.value)}
+                      placeholder="Add domain (e.g. organization.org)"
+                      className={`flex-1 px-3 py-2 border rounded-xl text-xs font-mono outline-hidden ${inputBaseClass}`}
+                    />
+                    <button
+                      type="submit"
+                      disabled={savingPolicy}
+                      className={`px-3 py-2 rounded-xl font-bold text-xs shrink-0 ${
+                        isLight
+                          ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                          : 'bg-amber-500 hover:bg-amber-400 text-[#12211a]'
+                      }`}
+                    >
+                      Add
+                    </button>
+                  </form>
+
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {(orgPolicy?.allowedDomains || []).length === 0 ? (
+                      <span className={`text-[11px] italic ${isLight ? 'text-slate-400' : 'text-[#7b9286]'}`}>
+                        Using default Firebase backend organization domain rule.
+                      </span>
+                    ) : (
+                      (orgPolicy?.allowedDomains || []).map((domain) => (
+                        <span
+                          key={domain}
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border font-mono text-[11px] ${
+                            isLight
+                              ? 'bg-slate-100 border-slate-200 text-slate-700'
+                              : 'bg-[#1a2c22] border-[#2c4436] text-[#f2ede0]'
+                          }`}
+                        >
+                          <span>@{domain}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemovePolicyDomain(domain)}
+                            className="text-red-500 hover:text-red-700"
+                            title="Remove domain"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                {/* Explicitly Authorized Individual Emails in Firebase */}
+                <div className={`pt-3 border-t space-y-2 ${isLight ? 'border-slate-200' : 'border-[#2c4436]'}`}>
+                  <label className={`block font-semibold text-xs ${isLight ? 'text-slate-700' : 'text-[#f2ede0]'}`}>
+                    Additional Authorized Email IDs (Firebase)
+                  </label>
+                  <form onSubmit={handleAddPolicyEmail} className="flex gap-1.5">
+                    <input
+                      type="email"
+                      value={newEmailInput}
+                      onChange={(e) => setNewEmailInput(e.target.value)}
+                      placeholder="Add specific email address"
+                      className={`flex-1 px-3 py-2 border rounded-xl text-xs font-mono outline-hidden ${inputBaseClass}`}
+                    />
+                    <button
+                      type="submit"
+                      disabled={savingPolicy}
+                      className={`px-3 py-2 rounded-xl font-bold text-xs shrink-0 ${
+                        isLight
+                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                          : 'bg-emerald-700 hover:bg-emerald-600 text-white'
+                      }`}
+                    >
+                      Add
+                    </button>
+                  </form>
+
+                  <div className="space-y-1.5 pt-1 max-h-40 overflow-y-auto">
+                    {(orgPolicy?.authorizedEmails || []).length === 0 ? (
+                      <span className={`text-[11px] italic ${isLight ? 'text-slate-400' : 'text-[#7b9286]'}`}>
+                        No extra individual emails added.
+                      </span>
+                    ) : (
+                      (orgPolicy?.authorizedEmails || []).map((email) => (
+                        <div
+                          key={email}
+                          className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border font-mono text-[11px] ${
+                            isLight
+                              ? 'bg-slate-50 border-slate-200 text-slate-700'
+                              : 'bg-[#1a2c22] border-[#2c4436] text-[#f2ede0]'
+                          }`}
+                        >
+                          <span className="truncate">{email}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemovePolicyEmail(email)}
+                            className="text-red-500 hover:text-red-700 shrink-0"
+                            title="Remove email"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 5: SECURITY AUDIT LOGS */}
         {activeTab === 'audit' && (
           <div className="flex-1 p-4 overflow-y-auto space-y-3">
             <div>
