@@ -358,6 +358,53 @@ export function getAuditLogs(): AuditLogEntry[] {
   return [];
 }
 
+// Super Admin ONLY: Permanently clear all audit logs from Cloud Firestore and local browser cache
+export async function clearAllAuditLogs(): Promise<{
+  success: boolean;
+  clearedCount?: number;
+  error?: string;
+}> {
+  if (!isAuthorizedAdminUser(auth.currentUser)) {
+    return { success: false, error: 'Only Super Admin can clear audit data.' };
+  }
+
+  const path = 'audit_logs';
+  let totalDeleted = 0;
+
+  try {
+    // Delete in safe batches of 400 until the entire audit_logs collection is empty
+    while (true) {
+      const snap = await getDocs(query(collection(db, 'audit_logs'), limit(400)));
+      if (snap.empty) break;
+
+      const batch = writeBatch(db);
+      snap.forEach((docSnap) => {
+        batch.delete(docSnap.ref);
+      });
+      await batch.commit();
+      totalDeleted += snap.size;
+
+      if (snap.size < 400) break;
+    }
+
+    // Also clear local browser audit cache so cleared records never reappear
+    try {
+      localStorage.removeItem(ADMIN_AUDIT_KEY);
+    } catch {
+      // Ignore storage cleanup error
+    }
+
+    return { success: true, clearedCount: totalDeleted };
+  } catch (error) {
+    try {
+      handleFirestoreError(error, OperationType.DELETE, path);
+    } catch {
+      // Logged via structured Firestore error handler
+    }
+    return { success: false, error: 'Failed to clear audit data in Firebase.' };
+  }
+}
+
 // ============================================================================
 // ORGANIZATION EMAIL VERIFICATION (100% Firebase Backend Enforced + 2-Day TTL)
 // ============================================================================

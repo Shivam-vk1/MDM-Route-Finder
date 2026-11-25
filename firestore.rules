@@ -229,12 +229,13 @@ service cloud.firestore {
       allow delete: if isAuthorizedAdmin() && isValidId(memberId);
     }
 
-    // Audit Logs Collection: Strictly viewable by Super Admin; append-only for verified admin/staff
+    // Audit Logs Collection: Strictly viewable & clearable by Super Admin only; append-only for verified admin/staff
     match /audit_logs/{logId} {
       allow get: if isAuthorizedAdmin() && isValidId(logId);
       allow list: if isAuthorizedAdmin();
       allow create: if isSignedIn() && request.auth.token.email_verified == true && isValidId(logId) && isValidAuditLog(incoming()) && isAuthorizedWriter();
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if isAuthorizedAdmin() && isValidId(logId);
     }
 
     // Public Verification Toggle Status (Contains ONLY enabled boolean & global revocation ms - zero domains or emails exposed)

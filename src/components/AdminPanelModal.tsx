@@ -52,6 +52,7 @@ import {
   revokeSingleOrgUserSession,
   revokeAllActiveOrgUsers,
   clearOldOrgAccessRecords,
+  clearAllAuditLogs,
   logSecurityAudit,
   AuditLogEntry,
   hashStaffPassword,
@@ -160,6 +161,9 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
   // Security Audit Logs
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
+  const [showClearAuditModal, setShowClearAuditModal] = useState(false);
+  const [isClearingAudit, setIsClearingAudit] = useState(false);
+  const [auditFeedback, setAuditFeedback] = useState<string | null>(null);
 
   // Organization Access Logs & Firebase Verification Policy (Super Admin Only)
   const [accessLogs, setAccessLogs] = useState<AccessLogEntry[]>([]);
@@ -399,6 +403,28 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       onNotify?.(msg);
     } else {
       setRevokeFeedback(res.error || 'Could not clear old access records.');
+    }
+  };
+
+  const handleClearAllAuditLogs = async () => {
+    if (!isSuperAdmin) return;
+    setIsClearingAudit(true);
+    setAuditFeedback(null);
+    const previousCount = logs.length;
+    const res = await clearAllAuditLogs();
+    setIsClearingAudit(false);
+    setShowClearAuditModal(false);
+    if (res.success) {
+      setLogs([]);
+      const count = res.clearedCount && res.clearedCount > 0 ? res.clearedCount : previousCount;
+      const msg =
+        count > 0
+          ? `Permanently cleared ${count} security audit record${count === 1 ? '' : 's'} from Firebase.`
+          : 'Audit log is already empty.';
+      setAuditFeedback(msg);
+      onNotify?.(msg);
+    } else {
+      setAuditFeedback(res.error || 'Could not clear audit data.');
     }
   };
 
@@ -992,63 +1018,73 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
         {/* MAIN WORKSPACE COLUMN */}
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
-          {/* MOBILE TOP BAR + CLEAN SCROLLABLE TAB STRIP */}
+          {/* MOBILE TOP BAR + CONSISTENT RECTANGULAR ACTION BUTTONS & NAV TABS */}
           <div className={`lg:hidden shrink-0 border-b ${surfaceBg} ${borderCol}`}>
-            <div className="px-4 py-3 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <img
-                  src={TAPF_LOGO_URL}
-                  alt="The Akshaya Patra Foundation"
-                  className={`h-7 w-auto max-w-[78px] rounded-md object-contain bg-white px-1 py-0.5 shrink-0 border ${
-                    isLight ? 'border-slate-200' : 'border-amber-500/30'
-                  }`}
-                  referrerPolicy="no-referrer"
-                />
-                <div className="min-w-0">
-                  <h2 className="font-heading font-bold text-sm leading-tight truncate">Admin Console</h2>
-                  <p className={`text-[11px] truncate ${mutedText}`}>
-                    {isSuperAdmin ? 'Super Admin' : activeStaff?.name}
-                  </p>
+            <div className="px-3.5 pt-3 pb-2.5 space-y-2.5">
+              {/* Brand Row */}
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <img
+                    src={TAPF_LOGO_URL}
+                    alt="The Akshaya Patra Foundation"
+                    className={`h-7 w-auto max-w-[78px] rounded-md object-contain bg-white px-1 py-0.5 shrink-0 border ${
+                      isLight ? 'border-slate-200' : 'border-amber-500/30'
+                    }`}
+                    referrerPolicy="no-referrer"
+                  />
+                  <div className="min-w-0">
+                    <h2 className="font-heading font-bold text-sm leading-tight truncate">Admin Console</h2>
+                    <p className={`text-[11px] truncate ${mutedText}`}>
+                      {isSuperAdmin ? 'Super Admin' : activeStaff?.name}
+                    </p>
+                  </div>
                 </div>
               </div>
 
-              <div className="flex items-center gap-1.5 shrink-0">
+              {/* Consistent Rectangular Top Action Buttons (Icon + Text Label) */}
+              <div className={`grid gap-2 ${onToggleTheme ? 'grid-cols-3' : 'grid-cols-2'}`}>
                 {onToggleTheme && (
                   <button
                     type="button"
                     onClick={onToggleTheme}
-                    className={`p-2 rounded-xl border transition-colors ${secondaryBtnClass}`}
+                    className={`inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg border text-xs font-semibold transition-colors whitespace-nowrap ${secondaryBtnClass}`}
                     aria-label="Toggle Theme"
                   >
-                    {isLight ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4 text-amber-400" />}
+                    {isLight ? (
+                      <Moon className="w-3.5 h-3.5 shrink-0" />
+                    ) : (
+                      <Sun className="w-3.5 h-3.5 shrink-0 text-amber-400" />
+                    )}
+                    <span>{isLight ? 'Dark' : 'Light'}</span>
                   </button>
                 )}
                 <button
                   type="button"
                   onClick={handleLogout}
-                  className={`p-2 rounded-xl border transition-colors ${
+                  className={`inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg border text-xs font-semibold transition-colors whitespace-nowrap ${
                     isLight
-                      ? 'bg-white text-red-600 border-slate-200 hover:bg-red-50'
-                      : 'bg-[#192c22] text-red-300 border-[#2c4436]'
+                      ? 'bg-white text-red-600 border-red-200 hover:bg-red-50'
+                      : 'bg-[#192c22] text-red-300 border-red-900/60 hover:bg-red-950/60'
                   }`}
                   aria-label="Sign Out"
-                  title="Sign Out"
                 >
-                  <LogOut className="w-4 h-4" />
+                  <LogOut className="w-3.5 h-3.5 shrink-0" />
+                  <span>Sign Out</span>
                 </button>
                 <button
                   type="button"
                   onClick={onClose}
-                  className={`p-2 rounded-xl border transition-colors ${secondaryBtnClass}`}
+                  className={`inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg border text-xs font-semibold transition-colors whitespace-nowrap ${secondaryBtnClass}`}
                   aria-label="Close Admin Console"
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-3.5 h-3.5 shrink-0" />
+                  <span>Close</span>
                 </button>
               </div>
             </div>
 
-            {/* Clean Single-Row Scrollable Tabs on Mobile */}
-            <div className="px-3 pb-2 flex items-center gap-1 overflow-x-auto no-scrollbar">
+            {/* Consistent Rectangular Navigation Tabs on Mobile (Icon + Text Label + Count) */}
+            <div className={`px-3.5 py-2 border-t flex items-center gap-2 overflow-x-auto no-scrollbar ${subtleBg} ${borderCol}`}>
               {navItems
                 .filter((item) => item.visible)
                 .map((item) => {
@@ -1058,19 +1094,24 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                       key={item.id}
                       type="button"
                       onClick={() => setActiveTab(item.id)}
-                      className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors ${
+                      className={`px-3 py-2 rounded-lg border text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors ${
                         isSelected
                           ? isLight
-                            ? 'bg-slate-900 text-white'
-                            : 'bg-[#21382b] text-amber-300'
+                            ? 'bg-slate-900 text-white border-slate-900 shadow-2xs'
+                            : 'bg-[#21382b] text-amber-300 border-amber-500/40 shadow-2xs'
                           : isLight
-                            ? 'text-slate-600 hover:bg-slate-100'
-                            : 'text-[#9ab0a3] hover:bg-[#1a2e23]'
+                            ? 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                            : 'bg-[#13221a] text-[#b4c7bc] border-[#2c4436] hover:bg-[#1a2e23]'
                       }`}
                     >
+                      {item.icon}
                       <span>{item.mobileLabel}</span>
-                      <span className="font-mono text-[11px] tabular-nums opacity-75">
-                        {item.count}
+                      <span
+                        className={`font-mono text-[11px] tabular-nums ${
+                          isSelected ? 'opacity-85' : mutedText
+                        }`}
+                      >
+                        ({item.count})
                       </span>
                     </button>
                   );
@@ -1079,7 +1120,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
           </div>
 
           {/* CONTEXTUAL WORKSPACE HEADER (Desktop & Mobile) */}
-          <div className={`px-4 sm:px-6 py-3.5 border-b flex items-center justify-between gap-3 shrink-0 ${surfaceBg} ${borderCol}`}>
+          <div className={`px-4 sm:px-6 py-3.5 border-b flex flex-wrap items-center justify-between gap-3 shrink-0 ${surfaceBg} ${borderCol}`}>
             <div className="min-w-0">
               <h3 className="font-heading font-bold text-base sm:text-lg leading-tight truncate">
                 {tabMeta[activeTab].title}
@@ -1089,25 +1130,25 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
               </p>
             </div>
 
-            {/* Contextual Primary Actions (Max 1-2 per tab + Desktop Close) */}
-            <div className="flex items-center gap-2 shrink-0">
+            {/* Contextual Primary Actions (Consistent Rectangular Boxes with Icons & Text Labels) */}
+            <div className="flex items-center gap-2 shrink-0 flex-wrap">
               {activeTab === 'schools' && (
                 <>
                   <button
                     type="button"
                     onClick={handleExportCSV}
-                    className={`hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition-colors whitespace-nowrap ${secondaryBtnClass}`}
+                    className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-semibold transition-colors whitespace-nowrap ${secondaryBtnClass}`}
                     title="Export complete 18-column CSV"
                   >
-                    <FileSpreadsheet className="w-3.5 h-3.5" />
+                    <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" />
                     <span>Export CSV</span>
                   </button>
                   <button
                     type="button"
                     onClick={onAddSchoolClick}
-                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition-colors whitespace-nowrap ${primaryBtnClass}`}
+                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-transparent text-xs font-semibold transition-colors whitespace-nowrap ${primaryBtnClass}`}
                   >
-                    <Plus className="w-4 h-4" />
+                    <Plus className="w-3.5 h-3.5 shrink-0" />
                     <span>Add School</span>
                   </button>
                 </>
@@ -1120,7 +1161,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   aria-checked={orgVerificationEnabled}
                   disabled={isTogglingOrgVerification}
                   onClick={() => onToggleOrgVerification(!orgVerificationEnabled)}
-                  className={`inline-flex items-center gap-2.5 px-3 py-2 rounded-xl border text-xs font-semibold transition-colors whitespace-nowrap disabled:opacity-60 ${
+                  className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-semibold transition-colors whitespace-nowrap disabled:opacity-60 ${
                     orgVerificationEnabled
                       ? isLight
                         ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700'
@@ -1144,14 +1185,32 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 </button>
               )}
 
+              {activeTab === 'audit' && isSuperAdmin && (
+                <button
+                  type="button"
+                  disabled={logs.length === 0 || isClearingAudit}
+                  onClick={() => setShowClearAuditModal(true)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-semibold transition-colors whitespace-nowrap disabled:opacity-45 disabled:cursor-not-allowed ${
+                    isLight
+                      ? 'bg-red-600 hover:bg-red-700 text-white border-red-700'
+                      : 'bg-red-700 hover:bg-red-600 text-white border-red-600'
+                  }`}
+                  title="Permanently clear all security audit logs (Super Admin only)"
+                >
+                  <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                  <span>Clear Audit Data</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={onClose}
-                className={`hidden lg:inline-flex p-2 rounded-xl border transition-colors ${secondaryBtnClass}`}
+                className={`hidden lg:inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-semibold transition-colors ${secondaryBtnClass}`}
                 title="Close Admin Console"
                 aria-label="Close Admin Console"
               >
-                <X className="w-4 h-4" />
+                <X className="w-3.5 h-3.5" />
+                <span>Close</span>
               </button>
             </div>
           </div>
@@ -1939,49 +1998,50 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 </div>
               )}
 
-              {/* Clean Segmented Sub-Navigation + Quick Refresh */}
+              {/* Consistent Rectangular Sub-Navigation Tabs + Quick Actions */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div
-                  className={`inline-flex p-1 rounded-xl border self-start overflow-x-auto max-w-full ${subtleBg} ${borderCol}`}
-                >
+                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar max-w-full">
                   <button
                     type="button"
                     onClick={() => setAccessSubTab('active')}
-                    className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+                    className={`px-3 py-2 rounded-lg border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 ${
                       accessSubTab === 'active'
                         ? isLight
-                          ? 'bg-white text-slate-900 shadow-2xs'
-                          : 'bg-[#21382b] text-amber-300'
-                        : `${mutedText} hover:opacity-100`
+                          ? 'bg-slate-900 text-white border-slate-900 shadow-2xs'
+                          : 'bg-[#21382b] text-amber-300 border-amber-500/40 shadow-2xs'
+                        : secondaryBtnClass
                     }`}
                   >
-                    Active Users ({activeAccessLogs.length})
+                    <Users className="w-3.5 h-3.5 shrink-0" />
+                    <span>Active Users ({activeAccessLogs.length})</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => setAccessSubTab('history')}
-                    className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+                    className={`px-3 py-2 rounded-lg border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 ${
                       accessSubTab === 'history'
                         ? isLight
-                          ? 'bg-white text-slate-900 shadow-2xs'
-                          : 'bg-[#21382b] text-amber-300'
-                        : `${mutedText} hover:opacity-100`
+                          ? 'bg-slate-900 text-white border-slate-900 shadow-2xs'
+                          : 'bg-[#21382b] text-amber-300 border-amber-500/40 shadow-2xs'
+                        : secondaryBtnClass
                     }`}
                   >
-                    Session History ({accessLogs.length})
+                    <Clock className="w-3.5 h-3.5 shrink-0" />
+                    <span>Session History ({accessLogs.length})</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => setAccessSubTab('policy')}
-                    className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+                    className={`px-3 py-2 rounded-lg border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 ${
                       accessSubTab === 'policy'
                         ? isLight
-                          ? 'bg-white text-slate-900 shadow-2xs'
-                          : 'bg-[#21382b] text-amber-300'
-                        : `${mutedText} hover:opacity-100`
+                          ? 'bg-slate-900 text-white border-slate-900 shadow-2xs'
+                          : 'bg-[#21382b] text-amber-300 border-amber-500/40 shadow-2xs'
+                        : secondaryBtnClass
                     }`}
                   >
-                    Firebase Policy
+                    <Globe className="w-3.5 h-3.5 shrink-0" />
+                    <span>Firebase Policy</span>
                   </button>
                 </div>
 
@@ -2421,7 +2481,26 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
               TAB 5: SECURITY AUDIT LOGS
              ================================================================ */}
           {activeTab === 'audit' && (
-            <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-5">
+            <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-5 space-y-4">
+              {auditFeedback && (
+                <div
+                  className={`px-4 py-2.5 rounded-xl border text-xs font-medium flex items-center justify-between gap-2 ${
+                    isLight
+                      ? 'bg-slate-50 border-slate-300 text-slate-800'
+                      : 'bg-[#192c22] border-[#2c4436] text-[#dce5df]'
+                  }`}
+                >
+                  <span>{auditFeedback}</span>
+                  <button
+                    type="button"
+                    onClick={() => setAuditFeedback(null)}
+                    className="opacity-65 hover:opacity-100 shrink-0"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
               <div className={`border rounded-xl divide-y ${borderCol} ${dividerCol}`}>
                 {logs.length === 0 ? (
                   <div className={`p-10 text-center text-xs ${mutedText}`}>
@@ -2446,6 +2525,60 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
           )}
         </div>
       </div>
+
+      {/* ====================================================================
+          CONFIRMATION POPUP: CLEAR ALL AUDIT DATA (SUPER ADMIN ONLY)
+         ==================================================================== */}
+      {showClearAuditModal && isSuperAdmin && (
+        <div
+          className="fixed inset-0 flex items-center justify-center p-4 bg-black/65 backdrop-blur-xs"
+          style={{ zIndex: 6200 }}
+        >
+          <div
+            className={`w-full max-w-md rounded-2xl border shadow-2xl p-6 space-y-4 ${surfaceBg} ${borderCol} ${primaryText}`}
+          >
+            <div className="flex items-start gap-3">
+              <div
+                className={`p-2.5 rounded-xl shrink-0 ${
+                  isLight ? 'bg-red-50 text-red-600' : 'bg-red-950/70 text-red-400'
+                }`}
+              >
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="space-y-1 min-w-0">
+                <h4 className="font-heading font-bold text-base">Clear All Audit Data?</h4>
+                <p className={`text-xs leading-relaxed ${mutedText}`}>
+                  This will permanently delete{' '}
+                  <strong className={primaryText}>
+                    {logs.length} security audit record{logs.length === 1 ? '' : 's'}
+                  </strong>{' '}
+                  from Firebase. This Super Admin action cannot be undone.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                disabled={isClearingAudit}
+                onClick={() => setShowClearAuditModal(false)}
+                className={`px-4 py-2 rounded-lg border text-xs font-semibold transition-colors ${secondaryBtnClass}`}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isClearingAudit}
+                onClick={handleClearAllAuditLogs}
+                className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors disabled:opacity-60"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isClearingAudit ? 'Clearing...' : 'Permanently Clear'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ====================================================================
           CONFIRMATION POPUP: CLEAR ALL OLD RECORDS

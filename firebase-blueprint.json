@@ -170,7 +170,7 @@
     },
     "/audit_logs/{logId}": {
       "schema": { "$ref": "#/entities/AuditLog" },
-      "description": "Audit log recording school, route, staff, and verification settings modifications."
+      "description": "Audit log recording school, route, staff, and verification settings modifications; clearing/deleting audit records is strictly restricted to Super Admin."
     },
     "/app_settings/verification_status": {
       "schema": { "$ref": "#/entities/VerificationStatus" },
