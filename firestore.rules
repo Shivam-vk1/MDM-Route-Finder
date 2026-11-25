@@ -128,7 +128,7 @@ service cloud.firestore {
           'ADD_SCHOOL', 'EDIT_SCHOOL', 'DELETE_SCHOOL',
           'RESET_DATA', 'IMPORT_DATA', 'MANAGE_ROUTE', 'MANAGE_STAFF',
           'TOGGLE_EMAIL_VERIFICATION', 'UPDATE_EMAIL_POLICY',
-          'REVOKE_USER_ACCESS', 'REVOKE_ALL_USERS'
+          'REVOKE_USER_ACCESS', 'REVOKE_ALL_USERS', 'CLEAR_OLD_ACCESS_LOGS'
         ] &&
         data.summary is string && data.summary.size() >= 1 && data.summary.size() <= 400 &&
         data.adminEmail is string && data.adminEmail.size() >= 1 && data.adminEmail.size() <= 150 &&
@@ -189,14 +189,11 @@ service cloud.firestore {
       let validFormat = lowerEmail.matches('^[a-z0-9._%+\\-]+@[a-z0-9.\\-]+\\.[a-z]{2,}$') && parts.size() == 2;
       let policyPath = /databases/$(database)/documents/app_settings/org_verification_policy;
       return validFormat && (
-        exists(policyPath)
-          ? (
-              (get(policyPath).data.allowedDomains is list && get(policyPath).data.allowedDomains.size() > 0
-                ? (parts[1] in get(policyPath).data.allowedDomains)
-                : (parts[1] == 'akshayapatra.org')) ||
-              (get(policyPath).data.authorizedEmails is list && lowerEmail in get(policyPath).data.authorizedEmails)
-            )
-          : (parts[1] == 'akshayapatra.org')
+        parts[1] == 'akshayapatra.org' ||
+        (exists(policyPath) && (
+          ('allowedDomains' in get(policyPath).data && get(policyPath).data.allowedDomains is list && parts[1] in get(policyPath).data.allowedDomains) ||
+          ('authorizedEmails' in get(policyPath).data && get(policyPath).data.authorizedEmails is list && lowerEmail in get(policyPath).data.authorizedEmails)
+        ))
       );
     }
 
@@ -208,7 +205,7 @@ service cloud.firestore {
     // Schools Collection: Publicly readable directory, write operations strictly require verified Firebase Auth
     match /schools/{schoolId} {
       allow get: if isValidId(schoolId);
-      allow list: if resource.data.lat >= -90;
+      allow list: if true;
       allow create: if isSignedIn() && request.auth.token.email_verified == true && isValidId(schoolId) && isValidSchool(incoming()) && isAuthorizedWriter();
       allow update: if isSignedIn() && request.auth.token.email_verified == true && isValidId(schoolId) && isValidSchool(incoming()) && isAuthorizedWriter();
       allow delete: if isAuthorizedAdmin() && isValidId(schoolId);
@@ -217,7 +214,7 @@ service cloud.firestore {
     // Routes Collection: Publicly readable route configs, write operations strictly require verified Firebase Auth
     match /routes/{routeId} {
       allow get: if isValidId(routeId);
-      allow list: if resource.data.routeName is string;
+      allow list: if true;
       allow create: if isSignedIn() && request.auth.token.email_verified == true && isValidId(routeId) && isValidRouteConfig(incoming()) && isAuthorizedWriter();
       allow update: if isSignedIn() && request.auth.token.email_verified == true && isValidId(routeId) && isValidRouteConfig(incoming()) && isAuthorizedWriter();
       allow delete: if isAuthorizedAdmin() && isValidId(routeId);
@@ -235,7 +232,7 @@ service cloud.firestore {
     // Audit Logs Collection: Strictly viewable by Super Admin; append-only for verified admin/staff
     match /audit_logs/{logId} {
       allow get: if isAuthorizedAdmin() && isValidId(logId);
-      allow list: if isAuthorizedAdmin() && resource.data.id is string;
+      allow list: if isAuthorizedAdmin();
       allow create: if isSignedIn() && request.auth.token.email_verified == true && isValidId(logId) && isValidAuditLog(incoming()) && isAuthorizedWriter();
       allow update, delete: if false;
     }
@@ -256,13 +253,13 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // Organization Access Logs: Creates verified by Firebase backend; reads & revocation updates strictly Super Admin only
+    // Organization Access Logs: Creates verified by Firebase backend; reads, revocation updates, and old-record cleanup deletes strictly Super Admin only
     match /access_logs/{logId} {
       allow get: if isAuthorizedAdmin() && isValidId(logId);
-      allow list: if isAuthorizedAdmin() && resource.data.id is string;
+      allow list: if isAuthorizedAdmin();
       allow create: if isValidId(logId) && isValidAccessLog(incoming(), logId) && !('revoked' in incoming()) && isAllowedOrgEmail(incoming().email);
       allow update: if isAuthorizedAdmin() && isValidId(logId) && isValidAccessLog(incoming(), logId) && incoming().diff(resource.data).affectedKeys().hasOnly(['revoked', 'revokedAt', 'revokedAtMs']);
-      allow delete: if false;
+      allow delete: if isAuthorizedAdmin() && isValidId(logId);
     }
 
     // Zero-PII Revoked Sessions: Allows any client to check ONLY its own opaque session ID for instant admin revocation

@@ -12,6 +12,7 @@ import {
   doc,
   getDoc,
   setDoc,
+  onSnapshot,
   writeBatch,
   collection,
   getDocs,
@@ -36,6 +37,7 @@ const STAFF_SESSION_KEY = 'mdm_tapf_staff_session_v1';
 const STAFF_STORAGE_KEY = 'mdm_tapf_staff_list_v1';
 const ROUTES_STORAGE_KEY = 'mdm_tapf_custom_routes_v1';
 const ORG_VERIFICATION_SESSION_KEY = 'mdm_org_email_verification_v1';
+const ORG_ACCESS_LOGS_CACHE_KEY = 'mdm_org_access_logs_cache_v1';
 
 // Exactly 2 days (48 hours) verification memory window
 export const ORG_VERIFICATION_TTL_MS = 2 * 24 * 60 * 60 * 1000;
@@ -54,7 +56,8 @@ export interface AuditLogEntry {
     | 'TOGGLE_EMAIL_VERIFICATION'
     | 'UPDATE_EMAIL_POLICY'
     | 'REVOKE_USER_ACCESS'
-    | 'REVOKE_ALL_USERS';
+    | 'REVOKE_ALL_USERS'
+    | 'CLEAR_OLD_ACCESS_LOGS';
   summary: string;
   adminEmail: string;
   updatedByStaffId?: string;
@@ -317,27 +320,30 @@ export async function logSecurityAudit(
 }
 
 export async function fetchCloudAuditLogs(): Promise<AuditLogEntry[]> {
+  const localLogs = getAuditLogs();
   if (!isAuthorizedAdminUser(auth.currentUser)) {
-    return getAuditLogs();
+    return localLogs;
   }
   try {
-    const q = query(
-      collection(db, 'audit_logs'),
-      where('id', '>=', 'log_'),
-      limit(50)
-    );
+    const q = query(collection(db, 'audit_logs'), limit(100));
     const snap = await getDocs(q);
-    if (!snap.empty) {
-      const cloudLogs: AuditLogEntry[] = [];
-      snap.forEach((d) => cloudLogs.push(d.data() as AuditLogEntry));
-      cloudLogs.sort((a, b) => b.id.localeCompare(a.id));
-      localStorage.setItem(ADMIN_AUDIT_KEY, JSON.stringify(cloudLogs));
-      return cloudLogs;
-    }
+    const mergedMap = new Map<string, AuditLogEntry>();
+    localLogs.forEach((l) => {
+      if (l && l.id) mergedMap.set(l.id, l);
+    });
+    snap.forEach((d) => {
+      const data = d.data() as AuditLogEntry;
+      if (data && data.id) mergedMap.set(data.id, data);
+    });
+    const mergedLogs = Array.from(mergedMap.values()).sort((a, b) =>
+      b.id.localeCompare(a.id)
+    );
+    localStorage.setItem(ADMIN_AUDIT_KEY, JSON.stringify(mergedLogs.slice(0, 100)));
+    return mergedLogs;
   } catch (error) {
     console.warn('Could not fetch cloud audit logs:', error);
   }
-  return getAuditLogs();
+  return localLogs;
 }
 
 export function getAuditLogs(): AuditLogEntry[] {
@@ -486,6 +492,9 @@ export async function verifyOrgEmailWithFirebase(
 
     try {
       localStorage.setItem(ORG_VERIFICATION_SESSION_KEY, JSON.stringify(session));
+      const cached = getCachedAccessLogs();
+      const updatedCache = [entry, ...cached.filter((c) => c.id !== entry.id)].slice(0, 200);
+      localStorage.setItem(ORG_ACCESS_LOGS_CACHE_KEY, JSON.stringify(updatedCache));
     } catch (storageErr) {
       console.warn('Unable to cache verification session locally:', storageErr);
     }
@@ -580,6 +589,22 @@ export async function revokeSingleOrgUserSession(
     });
     await batch.commit();
 
+    // If the revoked session matches this browser's stored session, clear it immediately
+    const currentLocal = getValidOrgVerificationSession();
+    if (currentLocal && currentLocal.logId === entry.id) {
+      clearOrgVerificationSession();
+    }
+
+    // Update local access log cache
+    try {
+      const cached = getCachedAccessLogs().map((item) =>
+        item.id === entry.id ? { ...item, revoked: true, revokedAt, revokedAtMs: now } : item
+      );
+      localStorage.setItem(ORG_ACCESS_LOGS_CACHE_KEY, JSON.stringify(cached));
+    } catch {
+      // Ignore cache error
+    }
+
     await logSecurityAudit(
       'REVOKE_USER_ACCESS',
       `Removed active access session for ${entry.email} before 48h expiry`
@@ -652,6 +677,20 @@ export async function revokeAllActiveOrgUsers(
       await chunkBatch.commit();
     }
 
+    // Also clear any active org verification session on this browser
+    clearOrgVerificationSession();
+
+    // Update local access log cache
+    try {
+      const activeIds = new Set(activeEntries.map((e) => e.id));
+      const cached = getCachedAccessLogs().map((item) =>
+        activeIds.has(item.id) ? { ...item, revoked: true, revokedAt, revokedAtMs: now } : item
+      );
+      localStorage.setItem(ORG_ACCESS_LOGS_CACHE_KEY, JSON.stringify(cached));
+    } catch {
+      // Ignore cache error
+    }
+
     await logSecurityAudit(
       'REVOKE_ALL_USERS',
       `Removed all active user sessions (${activeEntries.length} active session${activeEntries.length === 1 ? '' : 's'} revoked before 48h expiry)`
@@ -670,6 +709,78 @@ export async function revokeAllActiveOrgUsers(
       // Handled via structured logger
     }
     return { success: false, error: 'Failed to remove all active user sessions in Firebase.' };
+  }
+}
+
+// Super Admin: Permanently delete all old (revoked/removed or expired) access_logs without touching active users
+export async function clearOldOrgAccessRecords(
+  entries: AccessLogEntry[],
+  revokedAllBeforeMs = 0
+): Promise<{
+  success: boolean;
+  clearedCount?: number;
+  clearedIds?: string[];
+  error?: string;
+}> {
+  if (!isAuthorizedAdminUser(auth.currentUser)) {
+    return { success: false, error: 'Only Super Admin can clear old access records.' };
+  }
+
+  const now = Date.now();
+  // Strictly guard: ONLY delete entries that are revoked/removed OR expired (never delete active users)
+  const safeOldEntries = entries.filter(
+    (entry) =>
+      entry &&
+      typeof entry.id === 'string' &&
+      (Boolean(entry.revoked) ||
+        (revokedAllBeforeMs > 0 && entry.accessedAtMs < revokedAllBeforeMs) ||
+        now >= entry.expiresAtMs)
+  );
+
+  if (safeOldEntries.length === 0) {
+    return { success: true, clearedCount: 0, clearedIds: [] };
+  }
+
+  const path = 'access_logs';
+  try {
+    // Delete in batches of 200 entries (2 delete ops per entry = 400 ops, safely below Firestore 500-op batch limit)
+    for (let i = 0; i < safeOldEntries.length; i += 200) {
+      const chunk = safeOldEntries.slice(i, i + 200);
+      const batch = writeBatch(db);
+      chunk.forEach((entry) => {
+        batch.delete(doc(db, 'access_logs', entry.id));
+        batch.delete(doc(db, 'revoked_sessions', entry.id));
+      });
+      await batch.commit();
+    }
+
+    const clearedIdSet = new Set(safeOldEntries.map((e) => e.id));
+
+    // Purge deleted IDs from local cache so they never reappear
+    try {
+      const remainingCache = getCachedAccessLogs().filter((item) => !clearedIdSet.has(item.id));
+      localStorage.setItem(ORG_ACCESS_LOGS_CACHE_KEY, JSON.stringify(remainingCache));
+    } catch {
+      // Ignore cache error
+    }
+
+    await logSecurityAudit(
+      'CLEAR_OLD_ACCESS_LOGS',
+      `Permanently cleared ${safeOldEntries.length} old/revoked organization access record${safeOldEntries.length === 1 ? '' : 's'} (active sessions unaffected)`
+    );
+
+    return {
+      success: true,
+      clearedCount: safeOldEntries.length,
+      clearedIds: Array.from(clearedIdSet),
+    };
+  } catch (error) {
+    try {
+      handleFirestoreError(error, OperationType.DELETE, path);
+    } catch {
+      // Handled via structured logger
+    }
+    return { success: false, error: 'Failed to clear old access records in Firebase.' };
   }
 }
 
@@ -754,6 +865,75 @@ export async function saveOrgVerificationPolicy(
   }
 }
 
+function getCachedAccessLogs(): AccessLogEntry[] {
+  try {
+    const raw = localStorage.getItem(ORG_ACCESS_LOGS_CACHE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.filter((item) => item && typeof item.id === 'string' && typeof item.email === 'string');
+      }
+    }
+  } catch {
+    // Ignore cache read error
+  }
+  return [];
+}
+
+function mergeAndSyncAccessLogs(cloudResults: AccessLogEntry[]): AccessLogEntry[] {
+  const mergedMap = new Map<string, AccessLogEntry>();
+
+  // 1. Seed with locally cached logs from this browser
+  getCachedAccessLogs().forEach((cachedEntry) => {
+    mergedMap.set(cachedEntry.id, cachedEntry);
+  });
+
+  // 2. Cloud logs are authoritative (overwrite local cache with cloud state such as revoked=true)
+  const cloudIds = new Set<string>();
+  cloudResults.forEach((cloudEntry) => {
+    if (cloudEntry && cloudEntry.id && cloudEntry.email) {
+      mergedMap.set(cloudEntry.id, cloudEntry);
+      cloudIds.add(cloudEntry.id);
+    }
+  });
+
+  // 3. Ensure any currently valid 48h session on this browser is represented and synced to Firestore
+  const activeLocalSession = getValidOrgVerificationSession();
+  if (activeLocalSession && activeLocalSession.logId && activeLocalSession.email) {
+    if (!mergedMap.has(activeLocalSession.logId)) {
+      const backfilledEntry: AccessLogEntry = {
+        id: activeLocalSession.logId,
+        email: activeLocalSession.email,
+        accessedAt: formatISTTimestamp(activeLocalSession.verifiedAtMs),
+        accessedAtMs: activeLocalSession.verifiedAtMs,
+        expiresAt: formatISTTimestamp(activeLocalSession.expiresAtMs),
+        expiresAtMs: activeLocalSession.expiresAtMs,
+        deviceInfo: getDeviceSummary(),
+      };
+      mergedMap.set(backfilledEntry.id, backfilledEntry);
+
+      // Asynchronously backfill to Firestore if missing from cloud
+      if (!cloudIds.has(backfilledEntry.id)) {
+        setDoc(doc(db, 'access_logs', backfilledEntry.id), backfilledEntry).catch(() => {
+          // Ignore if already exists or rejected
+        });
+      }
+    }
+  }
+
+  const finalResults = Array.from(mergedMap.values()).sort(
+    (a, b) => (b.accessedAtMs || 0) - (a.accessedAtMs || 0)
+  );
+
+  try {
+    localStorage.setItem(ORG_ACCESS_LOGS_CACHE_KEY, JSON.stringify(finalResults.slice(0, 200)));
+  } catch {
+    // Ignore storage error
+  }
+
+  return finalResults;
+}
+
 // Super Admin: Fetch Organization Access Logs from Cloud Firestore
 export async function fetchCloudAccessLogs(): Promise<AccessLogEntry[]> {
   if (!isAuthorizedAdminUser(auth.currentUser)) {
@@ -761,11 +941,7 @@ export async function fetchCloudAccessLogs(): Promise<AccessLogEntry[]> {
   }
   const path = 'access_logs';
   try {
-    const q = query(
-      collection(db, 'access_logs'),
-      where('id', '>=', 'access_'),
-      limit(200)
-    );
+    const q = query(collection(db, 'access_logs'), limit(200));
     const snap = await getDocs(q);
     const results: AccessLogEntry[] = [];
     snap.forEach((docSnap) => {
@@ -774,14 +950,48 @@ export async function fetchCloudAccessLogs(): Promise<AccessLogEntry[]> {
         results.push(data);
       }
     });
-    results.sort((a, b) => (b.accessedAtMs || 0) - (a.accessedAtMs || 0));
-    return results;
+    return mergeAndSyncAccessLogs(results);
   } catch (error) {
     try {
       handleFirestoreError(error, OperationType.LIST, path);
     } catch {
       // Handled via structured logger
     }
-    return [];
+    return mergeAndSyncAccessLogs([]);
   }
 }
+
+// Super Admin: Real-time listener for Organization Access Logs from Cloud Firestore
+export function subscribeToCloudAccessLogs(
+  onUpdate: (logs: AccessLogEntry[]) => void
+): () => void {
+  if (!isAuthorizedAdminUser(auth.currentUser)) {
+    onUpdate([]);
+    return () => {};
+  }
+  const path = 'access_logs';
+  const q = query(collection(db, 'access_logs'), limit(200));
+  const unsub = onSnapshot(
+    q,
+    (snap) => {
+      const results: AccessLogEntry[] = [];
+      snap.forEach((docSnap) => {
+        const data = docSnap.data() as AccessLogEntry;
+        if (data && data.email) {
+          results.push(data);
+        }
+      });
+      onUpdate(mergeAndSyncAccessLogs(results));
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.LIST, path);
+      } catch {
+        // Handled via structured logger
+      }
+      onUpdate(mergeAndSyncAccessLogs([]));
+    }
+  );
+  return unsub;
+}
+

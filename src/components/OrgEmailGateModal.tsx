@@ -15,6 +15,7 @@ interface OrgEmailGateModalProps {
   isOpen: boolean;
   onVerified: (session: OrgVerificationSession) => void;
   onOpenAdminLogin: () => void;
+  isSuperAdmin?: boolean;
   theme?: 'dark' | 'light';
 }
 
@@ -22,6 +23,7 @@ export const OrgEmailGateModal: React.FC<OrgEmailGateModalProps> = ({
   isOpen,
   onVerified,
   onOpenAdminLogin,
+  isSuperAdmin = false,
   theme = 'light',
 }) => {
   const isLight = theme === 'light';
@@ -226,7 +228,7 @@ export const OrgEmailGateModal: React.FC<OrgEmailGateModalProps> = ({
             }`}
           >
             <Lock className="w-3.5 h-3.5" />
-            <span>Admin Sign In</span>
+            <span>{isSuperAdmin ? 'Open Admin Console' : 'Admin Sign In'}</span>
           </button>
         </div>
       </div>

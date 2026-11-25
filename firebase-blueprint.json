@@ -90,7 +90,8 @@
             "TOGGLE_EMAIL_VERIFICATION",
             "UPDATE_EMAIL_POLICY",
             "REVOKE_USER_ACCESS",
-            "REVOKE_ALL_USERS"
+            "REVOKE_ALL_USERS",
+            "CLEAR_OLD_ACCESS_LOGS"
           ],
           "maxLength": 50,
           "description": "Type of administrative action"
@@ -181,7 +182,7 @@
     },
     "/access_logs/{logId}": {
       "schema": { "$ref": "#/entities/AccessLog" },
-      "description": "Organization email access log; creates are backend-verified via Firestore rules, reads & revocation updates strictly restricted to Super Admin."
+      "description": "Organization email access log; creates are backend-verified via Firestore rules, reads, revocation updates, and old-record cleanup deletes strictly restricted to Super Admin."
     },
     "/revoked_sessions/{logId}": {
       "schema": { "$ref": "#/entities/RevokedSession" },
